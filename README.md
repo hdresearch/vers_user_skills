@@ -92,7 +92,40 @@ uv run scripts/vers_api.py commit-set-public <commit_id>
 
 ---
 
-### `vers_fleet.py` — build-root / build-golden / provision
+### `vers_stack.py` — self-contained standup wrapper (recommended)
+
+Self-contained wrapper around `vers-fleets` for provisioning, image builds, and UI login links.
+
+```bash
+# inspect resolved repos + branches + tooling
+uv run scripts/vers_stack.py doctor
+
+# fast path: provision from known public commits
+uv run scripts/vers_stack.py provision-public --out-dir out
+
+# build custom images (auto-wires local sibling reef/pi-vers repos)
+uv run scripts/vers_stack.py build-root --private --out-dir out
+uv run scripts/vers_stack.py build-golden --private --out-dir out
+
+# explicit commit provisioning
+uv run scripts/vers_stack.py provision \
+  --root-commit <root-id> \
+  --golden-commit <golden-id> \
+  --out-dir out
+
+# generate reef UI magic link from deployment manifest
+uv run scripts/vers_stack.py magic-link --deployment out/deployment.json
+```
+
+Repo resolution order:
+1. `--vers-fleets-repo`
+2. `$VERS_FLEETS_REPO`
+3. sibling `../vers-fleets`
+4. `/tmp/vers-fleets`
+
+---
+
+### `vers_fleet.py` — thin vers-fleets wrapper (legacy)
 
 Wrapper around `bun src/cli.js` in a local vers-fleets checkout.
 
@@ -142,6 +175,7 @@ Assumes pi-vers checkout at `/tmp/pi-vers`.
 | `vers-stack-bootstrap` | Build-root / build-golden / provision workflows |
 | `vers-stack-runtime` | Reef control plane ops |
 | `vers-stack-dev` | pi-vers extension development |
+| `vers-stack-standup` | Self-contained standup flow: provision-public, build-root/golden, magic-link, v2 branch refs |
 
 ---
 
@@ -174,4 +208,4 @@ agent VM
 - `uv` — for running scripts
 - `ssh` + `openssl` — for lt.py VM connections
 - `VERS_API_KEY` — set in env
-- `bun` — only for vers_fleet.py
+- `bun` — for vers_fleet.py and vers_stack.py
