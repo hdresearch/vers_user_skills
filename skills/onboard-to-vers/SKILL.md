@@ -122,6 +122,12 @@ Surface the install to the user before running it — it writes to
 
 ## Programmatic shell-auth flow (Route A, full)
 
+> This section is the **operational recipe**: what to do, in what order, with what
+> hygiene. For endpoint request/response shapes, error codes (400/403/409), and the
+> `body` / `is_new_user` / `is_active` / `key_id` response fields, see
+> `vers-api-reference` § Shell Auth. This skill owns the walkthrough; that skill
+> owns the wire format.
+
 Three API calls. The user's only manual step is clicking the verification link
 in their email.
 

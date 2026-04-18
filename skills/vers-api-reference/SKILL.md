@@ -3,7 +3,7 @@ name: vers-api-reference
 description: >
   Authoritative Vers platform API reference distilled from docs.vers.sh/llms-full.txt.
   Covers VM lifecycle, commits, branching, SSH access, shell-auth, and CLI-to-API mapping.
-  Use when making any Vers API call, writing pi extensions, or implementing fleet automation.
+  Use when making any Vers API call or building agent tooling against the Vers platform.
 metadata:
   author: Carter Schonwald
   version: 1
@@ -16,6 +16,21 @@ metadata:
 Base URL: `https://api.vers.sh/api/v1`
 Docs index: `https://docs.vers.sh/llms.txt`
 Full docs: `https://docs.vers.sh/llms-full.txt`
+
+## Companion CLI
+
+`scripts/vers_api.py` (sibling to this skill) is a zero-dep Python wrapper over the
+endpoints documented below. Agents may shell out to it instead of hand-crafting curl:
+
+```bash
+VERS_API_KEY=... uv run scripts/vers_api.py vms
+VERS_API_KEY=... uv run scripts/vers_api.py new-root --mem 4096 --vcpu 2
+```
+
+Use it when the ergonomics matter; fall through to raw HTTP for anything the wrapper
+doesn't cover (see `## Refreshing this reference` below for how it falls behind).
+
+---
 
 ## Authentication
 
@@ -145,6 +160,13 @@ curl -X PATCH https://api.vers.sh/api/v1/commits/{commit_id} \
 ---
 
 ## Shell Auth (programmatic key creation for agents / CLI)
+> **Canonical operational recipe: `onboard-to-vers`.** The step-by-step walkthrough
+> (state detection, route selection, key persistence, smoke test, hygiene) lives in
+> `skills/onboard-to-vers/SKILL.md`. What follows below is the **call-layer truth**:
+> endpoint shapes, request/response fields, and error codes. When in doubt about
+> *how* to onboard an agent or user, read `onboard-to-vers`. When in doubt about
+> *what the endpoint expects*, stay here.
+
 
 Three-step flow. Only browser interaction: clicking email link.
 
@@ -235,6 +257,42 @@ POST /api/shell-auth/verify-public-key  → lookup key by public key
 // errors
 {"error": "Error description", "success": false}
 ```
+
+---
+
+## Refreshing this reference
+
+This skill is a distillation of `docs.vers.sh/llms-full.txt` at the `retrieved:`
+timestamp in the frontmatter. The upstream changes; this file doesn't unless someone
+refreshes it. Do so when: (a) an endpoint below returns a surprising error, (b) the
+Vers changelog or docs add a new endpoint the skills don't cover, (c) quarterly as
+hygiene.
+
+Recipe:
+
+```bash
+# 1. Pull current source of truth
+curl -sS https://docs.vers.sh/llms-full.txt > /tmp/vers-docs.new.txt
+curl -sS https://docs.vers.sh/llms.txt      > /tmp/vers-index.new.txt
+
+# 2. Diff endpoint headings against what this file documents
+grep -E '^# (Post|Get|Put|Patch|Delete) apiv1' /tmp/vers-docs.new.txt | sort -u
+#   → cross-check against the tables in this skill
+
+# 3. For any new/changed endpoint, fetch its OpenAPI stub:
+#    https://docs.vers.sh/api-reference/<section>/<slug>.md
+#    → shows request/response schemas the llms-full.txt omits
+
+# 4. Update this file's tables + request/response examples
+# 5. Bump frontmatter: version + retrieved (YYYY-MM-DD)
+# 6. Run the eval harness (tests/vers_skills_eval_prompts.md) against the three
+#    skills as a regression smoke test
+```
+
+Known un-documented-here surface as of latest review: `/repositories` (+ tags, fork,
+visibility), `/public/repositories`, `/vm/branch/by_ref`, `/vm/{id}/files` (PUT/GET),
+`/vm/{id}/exec`, `/vm/{id}/execstream`, `/vm/{id}/logs`, `/domains`, `/env_vars`.
+These are staged for v2.
 
 ---
 

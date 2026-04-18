@@ -94,6 +94,20 @@ Endpoint details, request/response shapes, auth headers: `vers-api-reference`.
 - Task is <10s and trivial; provisioning overhead dominates.
 - User explicitly said "run it here."
 
+### Cost / quota (surface this too)
+
+Every `new_root`, `from_commit`, and running-branch VM has a footprint on the user's
+Vers account: compute-minutes while running, disk while stored, and any per-org
+quotas the org has set. Surfacing the offload decision (see Anti-patterns) **MUST**
+include the footprint when it's non-trivial: "this fan-out spins up 64 VMs in
+parallel — ~N compute-minutes, counts against your org's concurrent-VM quota."
+If you hit a quota error (HTTP 429 or quota-coded 400), stop, surface to the user,
+do not silently retry with backoff. Quota is a policy signal, not a transient fault.
+
+Exact pricing/quota values are not the agent's to remember; the user's Vers
+billing page (`https://vers.sh/billing`) is the source of truth. The agent's job
+is to name that a cost exists and roughly how much the proposed action consumes.
+
 When unsure: offer the offload with a one-line rationale and let the user steer.
 
 ---
@@ -151,6 +165,46 @@ Criteria for promoting a VM to a warm base:
 Name the tag in a way future-you will recognize. Track which tags belong to your
 workflow.
 
+### Warm-base recipe registry
+
+Concrete promotion recipes. Each describes what to install, what tag to use, and
+the rough setup-cost you're amortizing. Use as templates, not gospel.
+
+**`rust-buildbox-<arch>-v1`** — Rust compile farm
+- Install: `curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable`; then `apt-get install -y build-essential pkg-config libssl-dev git`.
+- Cache: optional `sccache` or pre-populated `~/.cargo/registry` if frequent rebuilds.
+- Setup cost amortized: ~60–120s.
+- Use cases: any `cargo build`, large crates, workspace compiles, CI-equivalent runs.
+
+**`python-datasci-<arch>-v1`** — Python data/ML scratchpad
+- Install: `apt-get install -y python3 python3-pip python3-venv git`; `pip install numpy pandas scikit-learn polars duckdb httpx tqdm pyarrow`.
+- Setup cost amortized: ~30–60s.
+- Use cases: CSV dedupe (when non-PII), scraping jobs, local data transforms, small-model sweeps.
+
+**`node-devbox-<arch>-v1`** — Node.js dev/test environment
+- Install: `curl -fsSL https://deb.nodesource.com/setup_22.x | bash -`; `apt-get install -y nodejs`; pre-stage `npm` mirror config if applicable.
+- Setup cost amortized: ~20–40s.
+- Use cases: Jest/Mocha suites, TypeScript builds, webpack/vite builds, package installs.
+
+**`forensic-sandbox-<arch>-v1`** — throwaway rooted Linux for risky code
+- Install: nothing. Ships the `default` image as-is.
+- Setup cost amortized: ~0 (already warm).
+- Use cases: untrusted installers, CVE tests, malware detonation, kernel-module tinkering. **Do not commit post-work state** — that defeats the forensic contract.
+
+**`webhook-listener-<arch>-v1`** — public-URL handler sandbox
+- Install: `apt-get install -y python3 socat curl jq`; optionally pre-stage `ngrok`-style request inspection scripts.
+- Setup cost amortized: ~20s.
+- Use cases: Stripe/GitHub/Slack webhook testing, short-lived demos, reverse-engineering integrations.
+
+Naming convention: `<purpose>-<arch>-v<N>`. Include arch because `host_architecture`
+is load-bearing (x86_64 commits do not boot on aarch64 hosts). Bump `vN` on setup
+changes; keep old versions until obsolete usage falls off.
+
+When you promote a VM to a warm base: commit, tag (or push to a Vers repository once
+`vers-repositories` lands in v2), document what's in it in one sentence somewhere the
+next agent can find (the commit's description field, or a sidecar manifest).
+
+
 ---
 
 ## Worked examples
@@ -183,6 +237,23 @@ User: "This bug is hard to explain — I want to hand someone a repro."
 - Recognize: need for a portable, reproducible environment.
 - Reproduce in a Vers VM. `commit`. `PATCH /commits/{commit_id}` with `is_public: true`.
 - Give the user the `commit_id` — anyone with a Vers account can `from_commit` and be in the exact same machine.
+
+### 5a. Receive a shared repro (other side of #4)
+Someone hands you a `commit_id` and says "repro my bug."
+- Smoke-test auth per `onboard-to-vers` (reach for its flow if no key).
+- `POST /vm/from_commit` with the given `commit_id`, `?wait_boot=true`.
+- Optional: `GET /vm/commits/{commit_id}/parents` to see lineage; `host_architecture`
+  on the commit response must match your account's available hosts (if not, surface
+  and ask the user — agent can't fix an arch mismatch unilaterally).
+- SSH in (or `POST /vm/{vm_id}/exec` once v2 lands). The VM is bit-identical to what
+  the reporter had when they committed. Reproduce, diagnose, fix or escalate.
+- When done: if you found a fix and want to hand back a "fixed" repro, commit your
+  VM, `PATCH is_public: true`, share the new `commit_id`. Otherwise `DELETE /vm/{vm_id}`.
+- Anti-pattern: assuming the shared commit is safe to run arbitrary things inside.
+  It's rooted Linux with whatever the reporter had; treat secrets/credentials in the
+  VM as if they belong to the reporter, and do not commit new state public without
+  scrubbing.
+
 
 ### 5. Fan-out a parameter sweep
 User: "Try these 20 config variants."
