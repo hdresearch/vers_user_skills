@@ -72,7 +72,11 @@ Obtain key from:
 
 Returns: `{ "vm_id": "<uuid>" }`
 
-Query param: `?wait_boot=true` — wait for SSH before returning.
+Query param: `?wait_boot=true` — wait for SSH to accept before returning. Caveat:
+fresh VMs may still drop long-lived SSH sessions (`rsync`, tarpipe, multi-step
+scp`) for a short window after return even when simple commands succeed. Warm the
+connection first and treat a single early transfer failure as instability, not proof
+the VM is dead.
 
 ### Restore from commit (`POST /vm/from_commit`)
 
@@ -109,6 +113,13 @@ ssh -i /tmp/vers-{vm_id}.key \
   root@{vm_id}.vm.vers.sh
 ```
 
+For `rsync` / `scp`, prefer a wrapper script instead of inlining `ProxyCommand`
+through `-e`; shell quoting is brittle there.
+
+Transport integrity is not guaranteed by exit code alone on this path. For any file
+whose bytes matter, verify source and destination hashes after copy. Silent prefix
+truncation has been observed with success exit status.
+
 ---
 
 ## Branching
@@ -131,11 +142,15 @@ Returns: `{ "vm_id": "<new-vm-uuid>" }`
 | `POST`   | `/vm/{vm_id}/commit`                    | Snapshot VM → commit        |
 | `GET`    | `/commits`                              | List your commits           |
 | `GET`    | `/commits/public`                       | List all public commits     |
-| `PATCH`  | `/commits/{commit_id}`                  | Update commit (e.g. is_public) |
+| `PATCH`  | `/commits/{commit_id}`                  | Update commit metadata      |
 | `DELETE` | `/commits/{commit_id}`                  | Delete commit               |
 | `GET`    | `/vm/commits/{commit_id}/parents`       | Get commit parents          |
 
 Returns from commit: `{ "commit_id": "<uuid>", "host_architecture": "x86_64" }`
+
+Request body for `POST /vm/{vm_id}/commit`: `{}` (empty JSON object required; no
+body may 400 on some server versions).
+Default: commits are private until explicitly patched public (`is_public: false`).
 
 Make public:
 ```bash
@@ -144,6 +159,10 @@ curl -X PATCH https://api.vers.sh/api/v1/commits/{commit_id} \
   -H "Content-Type: application/json" \
   -d '{"is_public": true}'
 ```
+
+Important: `PATCH /commits/{commit_id}` may validate against the full mutable commit
+schema rather than a sparse partial. When editing commit metadata, fetch current
+state first and send all mutable fields you intend to preserve.
 
 ---
 

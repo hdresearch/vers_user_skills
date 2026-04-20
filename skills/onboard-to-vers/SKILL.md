@@ -269,6 +269,39 @@ detect state
 
 ---
 
+## First SSH and first tools
+
+After onboarding, the first SSH session is the first real proof that the machine is
+usable for work. Two caveats matter immediately:
+
+- The `openssl s_client` ProxyCommand used for SSH-over-443 has observed silent
+  prefix truncation on some transfers with exit code 0. For any file whose bytes
+  matter, verify hashes after copy. Do not trust `scp` / `rsync` success alone.
+- The default image is sparse. Expect to install core tools explicitly before doing
+  real work.
+
+A safe first pass looks like:
+
+```bash
+# First connection: prove the VM is alive before bulk copy
+ssh -i /tmp/vers-{vm_id}.key \
+  -o StrictHostKeyChecking=no \
+  -o ProxyCommand="openssl s_client -connect %h:443 -servername %h -quiet 2>/dev/null" \
+  root@{vm_id}.vm.vers.sh 'echo alive && uname -a'
+
+# Then install the small core you actually need
+DEBIAN_FRONTEND=noninteractive apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync curl git build-essential
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq procps parallel || true
+which rsync curl git parallel free
+```
+
+Treat `procps` / `parallel` configure errors on the default image as suspicious but
+not automatically fatal: verify the binaries before trusting the install.
+
+---
+
+
 ## Hygiene
 
 - **Never log the API key.** Mask in any output. The shell-auth response is

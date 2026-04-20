@@ -9,7 +9,7 @@ description: >
   `git worktree`, duplicate an environment for parallel work, fan-out a sweep or bisect,
   snapshot state to return to or share, pause/resume across sessions, stand up a public
   URL briefly, or isolate risky work. Teaches the impulse-to-primitive mapping, the
-  warm-base branching pattern, auth, and commit-and-delete hygiene. Delegates endpoint
+image-baking pattern, auth, and commit-and-delete hygiene. Delegates endpoint
   details to `vers-api-reference`.
 metadata:
   author: Carter Schonwald
@@ -35,11 +35,11 @@ Any of these impulses is Vers-shaped:
 - **"Let me try this in a sandbox."** → disposable Vers VM.
 - **"I want to try two approaches side by side."** → two Vers branches from the same VM.
 - **"Let me `git worktree` this."** → Vers branch (carries environment, not just files).
-- **"Run this twenty ways."** → fan-out branches from a warm commit.
+- **"Run this twenty ways."** → fan-out branches from an image commit.
 - **"Bisect this."** → parallel branches across the candidate range, not sequential.
 - **"Save this state so I can come back."** → Vers commit.
 - **"Hand this repro to a human."** → public commit + `commit_id`.
-- **"Spawn a worker."** → VM from a warm commit.
+- **"Spawn a worker."** → VM from an image commit.
 - **"I need a public URL for five minutes."** → Vers VM, port bound to `::`, public by default.
 
 None of these require a new habit. They map impulses you already have to primitives
@@ -58,10 +58,10 @@ that already exist.
 | "share this repro" | `commit` + `PATCH is_public: true` + share `commit_id` |
 | "resume yesterday's work" | `POST /vm/from_commit` |
 | "pause; come back later" | `PATCH /vm/{id}/state {Paused}` |
-| "spawn a worker" | `from_commit` (warm base) + SSH |
-| "run N ways in parallel" | N × `from_commit` from a warm commit |
+| "spawn a worker" | `from_commit` (image commit) + SSH |
+| "run N ways in parallel" | N × `from_commit` from an image commit |
 | "git bisect" | N × `POST /vm/branch/by_commit/{commit_id}`, parallel |
-| "offload this build/test/scrape" | `from_commit` warm base, SSH in, run, pull, delete |
+| "offload this build/test/scrape" | `from_commit` an image commit, SSH in, run, pull, delete |
 | "tag the good one" | `POST /commit_tags` |
 
 Endpoint details, request/response shapes, auth headers: `vers-api-reference`.
@@ -122,10 +122,10 @@ Every Vers task follows this shape:
    proceed past this step until the smoke test passes.
 2. **Provision.** First time: `POST /vm/new_root` with appropriate
    `mem_size_mib`/`vcpu_count`/`fs_size_mib`, `?wait_boot=true`. Subsequent times for
-   similar work: `POST /vm/from_commit` from a warm-base commit (see next section).
+   similar work: `POST /vm/from_commit` from a baked image commit (see next section).
 3. **Work.** SSH in (host `{vm_id}.vm.vers.sh`, port 443, key from `GET /vm/{vm_id}/ssh_key`).
    Do the thing. If serving a port, bind `::` not `0.0.0.0`.
-4. **Capture.** If resulting state is worth keeping (warm deps, useful output,
+4. **Capture.** If resulting state is worth keeping (prepared dependencies, useful output,
    reproducer): `POST /vm/{vm_id}/commit`. Tag it with `POST /commit_tags` if it
    should be findable later. Make it public only if you mean to share it.
 5. **Clean up.** `DELETE /vm/{vm_id}`. Or `PATCH /state {Paused}` if the user is
@@ -136,63 +136,95 @@ before yielding. `GET /vms` to sanity-check.
 
 ---
 
-## Warm-base pattern (the thing that makes this not suck)
+## Image-baking pattern
+
+> Vers helps the user work faster, safer, and wider.
 
 Naive offload: every subagent task pays the provisioning cost — fresh VM, re-install
 toolchain, re-fetch deps, re-build caches. Slow. Users notice.
 
-Correct offload: the *first* task on a given class of work provisions, installs, and
-then **commits a warm base**. Every subsequent task of that class branches from the
-warm commit — subseconds to a running VM with everything ready.
+Correct offload: the *first* task on a given class of work provisions, updates,
+installs, verifies, and then **bakes an image** by committing the resulting VM state.
+Every subsequent task of that class branches from that image commit.
 
 Pattern:
 
 ```
-# first time — pay the setup cost once
-new_root → ssh in → apt install build-essential cmake … → git clone deps → commit
-  → tag "rust-buildbox-v1" → keep
+## first time — bake the image once
+new_root → apt upgrade → install deps → verify → commit
+  → tag `rust-buildbox-v1` → keep
 
-# every time after — branch the warm base
-from_commit (commit_id from tag "rust-buildbox-v1") → ssh in → cargo build → …
+## every time after — branch the image
+from_commit (commit_id from tag `rust-buildbox-v1`) → ssh in → cargo build → …
   → delete
 ```
 
-Criteria for promoting a VM to a warm base:
+> Bake the machine you actually proved out, not the one you imagine rebuilding later.
+
+Bake only after verification. Every baked image should explain itself from inside
+the machine, and the machine should carry an honest transcript of how it was baked.
+The cleaned-up recipe is secondary; the transcript is the authority.
+
+### Security updates come first
+
+For any image you intend to reuse, the first step is security updates. Rebakes are
+therefore expected to differ at the patched package layer. That is honest variance,
+not failure. Record it.
+
+### What a reusable image must preserve
+
+- A short in-machine explanation of what the image is for, where it came from, and
+  how to continue from it.
+- The honest command transcript of the bake, not only a cleaned-up rebuild script.
+- Exact realized versions, commit hashes, and artifact hashes for every layered input
+  that materially shaped the image.
+- The root image / starting commit the bake began from, plus verification commands or
+  checks that justified committing it.
+
+Criteria for baking an image:
 - Setup took >30s.
 - You expect to do similar work again.
-- The setup is deterministic enough to be worth freezing.
+- The resulting machine state is worth freezing and branching from repeatedly.
 
 Name the tag in a way future-you will recognize. Track which tags belong to your
 workflow.
 
-### Warm-base recipe registry
+### Baked image recipes
 
-Concrete promotion recipes. Each describes what to install, what tag to use, and
-the rough setup-cost you're amortizing. Use as templates, not gospel.
+Concrete image recipes. Each describes what to install, what tag to use, and the
+rough setup-cost you're amortizing. Use as templates, not gospel.
 
 **`rust-buildbox-<arch>-v1`** — Rust compile farm
-- Install: `curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable`; then `apt-get install -y build-essential pkg-config libssl-dev git`.
+- Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
+  then `apt-get install -y build-essential pkg-config libssl-dev git curl ca-certificates rsync xz-utils time`.
+  Then `curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable`.
 - Cache: optional `sccache` or pre-populated `~/.cargo/registry` if frequent rebuilds.
 - Setup cost amortized: ~60–120s.
 - Use cases: any `cargo build`, large crates, workspace compiles, CI-equivalent runs.
 
 **`python-datasci-<arch>-v1`** — Python data/ML scratchpad
-- Install: `apt-get install -y python3 python3-pip python3-venv git`; `pip install numpy pandas scikit-learn polars duckdb httpx tqdm pyarrow`.
+- Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
+  then `apt-get install -y python3 python3-pip python3-venv git rsync curl ca-certificates` and
+  `pip install numpy pandas scikit-learn polars duckdb httpx tqdm pyarrow`.
 - Setup cost amortized: ~30–60s.
 - Use cases: CSV dedupe (when non-PII), scraping jobs, local data transforms, small-model sweeps.
 
 **`node-devbox-<arch>-v1`** — Node.js dev/test environment
-- Install: `curl -fsSL https://deb.nodesource.com/setup_22.x | bash -`; `apt-get install -y nodejs`; pre-stage `npm` mirror config if applicable.
+- Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
+  `apt-get install -y curl ca-certificates git rsync`; then
+  `curl -fsSL https://deb.nodesource.com/setup_22.x | bash -` and `apt-get install -y nodejs`.
 - Setup cost amortized: ~20–40s.
 - Use cases: Jest/Mocha suites, TypeScript builds, webpack/vite builds, package installs.
 
 **`forensic-sandbox-<arch>-v1`** — throwaway rooted Linux for risky code
-- Install: nothing. Ships the `default` image as-is.
-- Setup cost amortized: ~0 (already warm).
-- Use cases: untrusted installers, CVE tests, malware detonation, kernel-module tinkering. **Do not commit post-work state** — that defeats the forensic contract.
+- Install: nothing beyond security updates unless the investigation requires it.
+- Setup cost amortized: ~0 (already close to useful).
+- Use cases: untrusted installers, CVE tests, malware detonation, kernel-module tinkering.
+  **Do not commit post-work state** — that defeats the forensic contract.
 
 **`webhook-listener-<arch>-v1`** — public-URL handler sandbox
-- Install: `apt-get install -y python3 socat curl jq`; optionally pre-stage `ngrok`-style request inspection scripts.
+- Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
+  then `apt-get install -y python3 socat curl jq rsync`.
 - Setup cost amortized: ~20s.
 - Use cases: Stripe/GitHub/Slack webhook testing, short-lived demos, reverse-engineering integrations.
 
@@ -200,9 +232,8 @@ Naming convention: `<purpose>-<arch>-v<N>`. Include arch because `host_architect
 is load-bearing (x86_64 commits do not boot on aarch64 hosts). Bump `vN` on setup
 changes; keep old versions until obsolete usage falls off.
 
-When you promote a VM to a warm base: commit, tag (or push to a Vers repository once
-`vers-repositories` lands in v2), document what's in it in one sentence somewhere the
-next agent can find (the commit's description field, or a sidecar manifest).
+When you bake an image: commit, tag, and leave enough evidence in the machine that
+the next operator can tell what it is, how it was baked, and what exact inputs landed.
 
 
 ---
@@ -212,7 +243,7 @@ next agent can find (the commit's description field, or a sidecar manifest).
 ### 1. Offload a long build
 User: "Can you build this big Rust repo and see if it compiles?"
 - Recognize: build is the entire task; multi-minute cargo compile; classic offload.
-- `from_commit` a rust-buildbox warm base (or `new_root` + install if none exists; then commit as warm base for next time).
+- `from_commit` a baked rust image (or `new_root` + install if none exists; then commit that image for next time).
 - SSH in, `git clone`, `cargo build --release`, capture the exit code and any errors.
 - Return result. Delete VM.
 
@@ -257,7 +288,7 @@ Someone hands you a `commit_id` and says "repro my bug."
 
 ### 5. Fan-out a parameter sweep
 User: "Try these 20 config variants."
-- Warm base with the binary and fixed inputs already in place, committed.
+- Bake the image with the binary and fixed inputs already in place, commit it once.
 - 20 × `from_commit` in parallel, each with a different config.
 - Collect metrics via SSH or via each VM's public URL.
 - Tag the champion. Delete the rest.
@@ -266,10 +297,14 @@ User: "Try these 20 config variants."
 
 ## Anti-patterns (don't do these)
 
-- **Silent provisioning without telling the user.** Surface the offload decision briefly ("offloading to a Vers VM for this build, ~40s setup"); let them veto.
+- **Silent provisioning without telling the user.** Surface the offload decision briefly ("offloading to a Vers VM for this build"); let them veto.
 - **Orphan VMs.** Track every VM you create. Delete before yielding unless the user has a reason to keep it.
-- **Re-provisioning what should be a warm base.** If you've done this kind of task before in this session, branch the warm commit.
+- **Re-provisioning what should be an image.** If you've done this kind of task before in this session, branch the baked image instead of starting from scratch.
+- **Kitchen-sink image.** Do not bake every maybe-useful tool, tweak, or one-off dependency into a single image until it gets heavy and blurry.
+- **Opaque image.** Do not leave an image without an in-machine explanation, honest bake transcript, and exact realized input versions/hashes.
+- **Surprise image.** Do not hide auto-run behavior, silent mutation, or context-sensitive defaults inside the image.
 - **Binding `0.0.0.0`.** The proxy routes IPv6 only. Bind `::` or the port appears dead.
+- **Trusting transfer success without integrity checks.** The `openssl s_client` ProxyCommand path has observed silent prefix truncation with exit code 0. Verify bytes after copy when integrity matters.
 - **Cross-architecture branching.** `host_architecture` in the commit response is load-bearing. x86_64 commits do not boot on aarch64 hardware; respect it.
 - **Leaking SSH private keys.** `GET /vm/{id}/ssh_key` returns a secret. Keep it in memory or `/tmp` with `0600`, delete after use, never log.
 - **Running sensitive-data tasks on Vers without asking.** Data leaves the user's machine; confirm that's okay.
@@ -281,10 +316,10 @@ User: "Try these 20 config variants."
 
 If you're unsure whether to offload, offer the user the choice in one sentence:
 
-> "This build will take ~3 minutes and saturate your CPU. I can offload it to a Vers VM (fresh Ubuntu, ~5s provisioning) or run it locally. Which do you prefer?"
+> "This build will take ~3 minutes and saturate your CPU. I can offload it to a Vers VM or run it locally. Which do you prefer?"
 
-Make the offload cost visible. Let the user set the policy. Above-board means the
-user always sees the reach, not just the result.
+State the footprint directly. Let the user set the policy. Above-board means the
+user sees what the action allocates and what will remain afterward.
 
 ---
 
