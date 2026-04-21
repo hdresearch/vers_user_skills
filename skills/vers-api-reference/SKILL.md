@@ -115,11 +115,6 @@ ssh -i /tmp/vers-{vm_id}.key \
 
 For `rsync` / `scp`, prefer a wrapper script instead of inlining `ProxyCommand`
 through `-e`; shell quoting is brittle there.
-
-Transport integrity is not guaranteed by exit code alone on this path. For any file
-whose bytes matter, verify source and destination hashes after copy. Silent prefix
-truncation has been observed with success exit status.
-
 ---
 
 ## Branching
@@ -146,10 +141,10 @@ Returns: `{ "vm_id": "<new-vm-uuid>" }`
 | `DELETE` | `/commits/{commit_id}`                  | Delete commit               |
 | `GET`    | `/vm/commits/{commit_id}/parents`       | Get commit parents          |
 
-Returns from commit: `{ "commit_id": "<uuid>", "host_architecture": "x86_64" }`
+Returns from commit: `{ "commit_id": "<uuid>" }`.
 
-Request body for `POST /vm/{vm_id}/commit`: `{}` (empty JSON object required; no
-body may 400 on some server versions).
+Request body for `POST /vm/{vm_id}/commit` is required; `{}` is the minimum valid
+JSON (all fields optional — pass `name` / `description` as you wish).
 Default: commits are private until explicitly patched public (`is_public: false`).
 
 Make public:
@@ -160,9 +155,8 @@ curl -X PATCH https://api.vers.sh/api/v1/commits/{commit_id} \
   -d '{"is_public": true}'
 ```
 
-Important: `PATCH /commits/{commit_id}` may validate against the full mutable commit
-schema rather than a sparse partial. When editing commit metadata, fetch current
-state first and send all mutable fields you intend to preserve.
+Only `is_public` is required by the `UpdateCommitRequest` schema; `name` and
+`description` are optional. Partial updates preserve unspecified fields.
 
 ---
 
@@ -271,7 +265,7 @@ POST /api/shell-auth/verify-public-key  → lookup key by public key
 {"vm_id": "<new-uuid>"}
 
 // POST /vm/{id}/commit
-{"commit_id": "<uuid>", "host_architecture": "x86_64"}
+{"commit_id": "<uuid>"}
 
 // errors
 {"error": "Error description", "success": false}

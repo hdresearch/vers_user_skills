@@ -60,7 +60,7 @@ that already exist.
 | "pause; come back later" | `PATCH /vm/{id}/state {Paused}` |
 | "spawn a worker" | `from_commit` (image commit) + SSH |
 | "run N ways in parallel" | N × `from_commit` from an image commit |
-| "git bisect" | N × `POST /vm/branch/by_commit/{commit_id}`, parallel |
+| "git bisect N git SHAs" | bake an image with repo+harness, then N × `POST /vm/branch/by_commit/<image commit_id>`, then `git checkout <sha>` in each VM |
 | "offload this build/test/scrape" | `from_commit` an image commit, SSH in, run, pull, delete |
 | "tag the good one" | `POST /commit_tags` |
 
@@ -101,8 +101,8 @@ Vers account: compute-minutes while running, disk while stored, and any per-org
 quotas the org has set. Surfacing the offload decision (see Anti-patterns) **MUST**
 include the footprint when it's non-trivial: "this fan-out spins up 64 VMs in
 parallel — ~N compute-minutes, counts against your org's concurrent-VM quota."
-If you hit a quota error (HTTP 429 or quota-coded 400), stop, surface to the user,
-do not silently retry with backoff. Quota is a policy signal, not a transient fault.
+If you hit a quota / allocation error, stop, surface to the user, do not silently retry with
+backoff. Quota is a policy signal, not a transient fault.
 
 Exact pricing/quota values are not the agent's to remember; the user's Vers
 billing page (`https://vers.sh/billing`) is the source of truth. The agent's job
@@ -194,7 +194,7 @@ workflow.
 Concrete image recipes. Each describes what to install, what tag to use, and the
 rough setup-cost you're amortizing. Use as templates, not gospel.
 
-**`rust-buildbox-<arch>-v1`** — Rust compile farm
+**`rust-buildbox-v1`** — Rust compile farm
 - Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
   then `apt-get install -y build-essential pkg-config libssl-dev git curl ca-certificates rsync xz-utils time`.
   Then `curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable`.
@@ -202,35 +202,34 @@ rough setup-cost you're amortizing. Use as templates, not gospel.
 - Setup cost amortized: ~60–120s.
 - Use cases: any `cargo build`, large crates, workspace compiles, CI-equivalent runs.
 
-**`python-datasci-<arch>-v1`** — Python data/ML scratchpad
+**`python-datasci-v1`** — Python data/ML scratchpad
 - Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
   then `apt-get install -y python3 python3-pip python3-venv git rsync curl ca-certificates` and
   `pip install numpy pandas scikit-learn polars duckdb httpx tqdm pyarrow`.
 - Setup cost amortized: ~30–60s.
 - Use cases: CSV dedupe (when non-PII), scraping jobs, local data transforms, small-model sweeps.
 
-**`node-devbox-<arch>-v1`** — Node.js dev/test environment
+**`node-devbox-v1`** — Node.js dev/test environment
 - Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
   `apt-get install -y curl ca-certificates git rsync`; then
   `curl -fsSL https://deb.nodesource.com/setup_22.x | bash -` and `apt-get install -y nodejs`.
 - Setup cost amortized: ~20–40s.
 - Use cases: Jest/Mocha suites, TypeScript builds, webpack/vite builds, package installs.
 
-**`forensic-sandbox-<arch>-v1`** — throwaway rooted Linux for risky code
+**`forensic-sandbox-v1`** — throwaway rooted Linux for risky code
 - Install: nothing beyond security updates unless the investigation requires it.
 - Setup cost amortized: ~0 (already close to useful).
 - Use cases: untrusted installers, CVE tests, malware detonation, kernel-module tinkering.
   **Do not commit post-work state** — that defeats the forensic contract.
 
-**`webhook-listener-<arch>-v1`** — public-URL handler sandbox
+**`webhook-listener-v1`** — public-URL handler sandbox
 - Install: `apt-get update -qq`; `DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -qq`;
   then `apt-get install -y python3 socat curl jq rsync`.
 - Setup cost amortized: ~20s.
 - Use cases: Stripe/GitHub/Slack webhook testing, short-lived demos, reverse-engineering integrations.
 
-Naming convention: `<purpose>-<arch>-v<N>`. Include arch because `host_architecture`
-is load-bearing (x86_64 commits do not boot on aarch64 hosts). Bump `vN` on setup
-changes; keep old versions until obsolete usage falls off.
+Naming convention: `<purpose>-v<N>`. Bump `vN` on setup changes; keep old versions
+until obsolete usage falls off.
 
 When you bake an image: commit, tag, and leave enough evidence in the machine that
 the next operator can tell what it is, how it was baked, and what exact inputs landed.
@@ -248,11 +247,12 @@ User: "Can you build this big Rust repo and see if it compiles?"
 - Return result. Delete VM.
 
 ### 2. Bisect, parallel
-User: "Find which of these 16 commits broke the test."
-- Recognize: classic bisect. Sequential would be 16× serial. Vers makes it log-parallel or full-parallel.
-- Fan out: for each candidate commit, `POST /vm/branch/by_commit/{commit_id}` in parallel.
-- SSH into each, run the test, collect pass/fail.
-- First failure boundary = the bad commit.
+User: "Find which of these 16 git commits broke the test."
+- Recognize: classic bisect. Sequential would be 16× serial. Vers makes it parallel.
+- Bake once: `new_root` → clone repo → install build/test deps → verify → `commit` as an image commit.
+- Fan out: N × `POST /vm/branch/by_commit/<image commit_id>`, in parallel. `{commit_id}` in this endpoint is the Vers image commit UUID, not a git SHA.
+- Inside each VM: `git checkout <candidate git sha>`, run the test, collect pass/fail.
+- First failure boundary = the bad git commit.
 - Delete all VMs.
 
 ### 3. Try two approaches side by side
@@ -273,9 +273,7 @@ User: "This bug is hard to explain — I want to hand someone a repro."
 Someone hands you a `commit_id` and says "repro my bug."
 - Smoke-test auth per `onboard-to-vers` (reach for its flow if no key).
 - `POST /vm/from_commit` with the given `commit_id`, `?wait_boot=true`.
-- Optional: `GET /vm/commits/{commit_id}/parents` to see lineage; `host_architecture`
-  on the commit response must match your account's available hosts (if not, surface
-  and ask the user — agent can't fix an arch mismatch unilaterally).
+- Optional: `GET /vm/commits/{commit_id}/parents` to see lineage.
 - SSH in (or `POST /vm/{vm_id}/exec` once v2 lands). The VM is bit-identical to what
   the reporter had when they committed. Reproduce, diagnose, fix or escalate.
 - When done: if you found a fix and want to hand back a "fixed" repro, commit your
@@ -304,8 +302,6 @@ User: "Try these 20 config variants."
 - **Opaque image.** Do not leave an image without an in-machine explanation, honest bake transcript, and exact realized input versions/hashes.
 - **Surprise image.** Do not hide auto-run behavior, silent mutation, or context-sensitive defaults inside the image.
 - **Binding `0.0.0.0`.** The proxy routes IPv6 only. Bind `::` or the port appears dead.
-- **Trusting transfer success without integrity checks.** The `openssl s_client` ProxyCommand path has observed silent prefix truncation with exit code 0. Verify bytes after copy when integrity matters.
-- **Cross-architecture branching.** `host_architecture` in the commit response is load-bearing. x86_64 commits do not boot on aarch64 hardware; respect it.
 - **Leaking SSH private keys.** `GET /vm/{id}/ssh_key` returns a secret. Keep it in memory or `/tmp` with `0600`, delete after use, never log.
 - **Running sensitive-data tasks on Vers without asking.** Data leaves the user's machine; confirm that's okay.
 - **Offloading trivial tasks.** A 2-second script does not need a VM. Provisioning overhead dominates.

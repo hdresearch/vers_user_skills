@@ -170,11 +170,31 @@ the link."
 ### Step 2 — Poll until verified
 
 ```bash
+DEADLINE=$(( $(date +%s) + 600 ))   # give the user 10 minutes to click
 while :; do
-  VERIFY=$(curl -sS -X POST https://vers.sh/api/shell-auth/verify-key \
+  HTTP=$(curl -sS -o /tmp/vers_verify.json -w '%{http_code}' \
+    -X POST https://vers.sh/api/shell-auth/verify-key \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"$EMAIL\",\"ssh_public_key\":\"$PUBKEY\"}")
-  echo "$VERIFY" | grep -q '"verified":true' && break
+  case "$HTTP" in
+    200)
+      if python3 -c 'import json,sys; d=json.load(open("/tmp/vers_verify.json")); sys.exit(0 if d.get("verified") is True else 1)'; then
+        break
+      fi
+      ;;
+    401|403)
+      echo "auth rejected ($HTTP); check email/key, do not retry blindly" >&2; exit 1 ;;
+    409)
+      echo "SSH key already bound to another account; pick a different key" >&2; exit 1 ;;
+    5*)
+      echo "server error ($HTTP); will retry briefly" >&2 ;;
+    *)
+      echo "unexpected status $HTTP" >&2 ;;
+  esac
+  if [ "$(date +%s)" -gt "$DEADLINE" ]; then
+    echo "verify timed out after 10 min; last status $HTTP" >&2
+    exit 1
+  fi
   sleep 3
 done
 ```
@@ -272,11 +292,8 @@ detect state
 ## First SSH and first tools
 
 After onboarding, the first SSH session is the first real proof that the machine is
-usable for work. Two caveats matter immediately:
+usable for work. One caveat matters immediately:
 
-- The `openssl s_client` ProxyCommand used for SSH-over-443 has observed silent
-  prefix truncation on some transfers with exit code 0. For any file whose bytes
-  matter, verify hashes after copy. Do not trust `scp` / `rsync` success alone.
 - The default image is sparse. Expect to install core tools explicitly before doing
   real work.
 

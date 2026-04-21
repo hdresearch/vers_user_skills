@@ -25,6 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any, TypedDict, cast
 
 API_BASE = "https://api.vers.sh/api/v1"
 AUTH_BASE = "https://vers.sh/api"
@@ -41,29 +42,92 @@ def api_key() -> str:
 def req(
     method: str,
     path: str,
-    body: dict | None = None,
+    body: dict[str, Any] | None = None,
     *,
     base: str = API_BASE,
     authed: bool = True,
-) -> dict | list:
+) -> object:
     url = base + path
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
     if authed:
         headers["Authorization"] = f"Bearer {api_key()}"
     r = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(r, timeout=120) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw) if raw.strip() else {}
+            raw_bytes: bytes = resp.read()
+            raw = raw_bytes.decode("utf-8", errors="replace")
+            if not raw.strip():
+                return {}
+            parsed: object = json.loads(raw)
+            return parsed
     except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")
+        body_bytes: bytes = e.read()
+        body_text = body_bytes.decode("utf-8", errors="replace")
         print(f"HTTP {e.code}: {body_text}", file=sys.stderr)
         sys.exit(1)
 
 
 def jprint(data: object) -> None:
     print(json.dumps(data, indent=2))
+
+
+# ───────────────────────── Boundary parse helpers ─────────────────────────
+
+class SchemaError(ValueError):
+    pass
+
+
+def expect_dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SchemaError(f"expected object, got {type(value).__name__}")
+    return cast(dict[str, Any], value)
+
+
+def expect_list(value: object) -> list[Any]:
+    if not isinstance(value, list):
+        raise SchemaError(f"expected array, got {type(value).__name__}")
+    return cast(list[Any], value)
+
+
+def expect_str(obj: dict[str, Any], key: str) -> str:
+    v = obj.get(key)
+    if not isinstance(v, str):
+        raise SchemaError(f"missing/invalid string field {key!r}")
+    return v
+
+
+def expect_bool(obj: dict[str, Any], key: str) -> bool:
+    v = obj.get(key)
+    if not isinstance(v, bool):
+        raise SchemaError(f"missing/invalid bool field {key!r}")
+    return v
+
+
+class CommitMetadata(TypedDict):
+    commit_id: str
+    is_public: bool
+    name: str
+    description: str
+
+
+def parse_commit(value: object) -> CommitMetadata:
+    d = expect_dict(value)
+    return CommitMetadata(
+        commit_id=expect_str(d, "commit_id"),
+        is_public=expect_bool(d, "is_public"),
+        name=expect_str(d, "name"),
+        description=expect_str(d, "description"),
+    )
+
+
+def parse_commits_list(value: object) -> list[CommitMetadata]:
+    d = expect_dict(value)
+    raw = d.get("commits")
+    if not isinstance(raw, list):
+        raise SchemaError("GET /commits missing 'commits' array")
+    items = cast(list[object], raw)
+    return [parse_commit(x) for x in items]
 
 
 # ───────────────────────── VM lifecycle ─────────────────────────
@@ -85,7 +149,7 @@ def cmd_vm_metadata(args: argparse.Namespace) -> int:
 
 def cmd_vm_new_root(args: argparse.Namespace) -> int:
     qs = "?wait_boot=true" if args.wait_boot else "?wait_boot=false"
-    body: dict = {
+    body: dict[str, Any] = {
         "vm_config": {
             "mem_size_mib": args.mem,
             "vcpu_count": args.vcpu,
@@ -102,7 +166,7 @@ def cmd_vm_from_commit(args: argparse.Namespace) -> int:
 
 
 def cmd_vm_commit(args: argparse.Namespace) -> int:
-    jprint(req("POST", f"/vm/{args.vm_id}/commit"))
+    jprint(req("POST", f"/vm/{args.vm_id}/commit", {}))
     return 0
 
 
@@ -140,8 +204,8 @@ def cmd_vm_delete(args: argparse.Namespace) -> int:
 
 
 def cmd_vm_ssh_key(args: argparse.Namespace) -> int:
-    data = req("GET", f"/vm/{args.vm_id}/ssh_key")
-    key_text = data.get("ssh_private_key", "")
+    data = expect_dict(req("GET", f"/vm/{args.vm_id}/ssh_key"))
+    key_text = expect_str(data, "ssh_private_key")
     key_path = Path(f"/tmp/vers-{args.vm_id[:12]}.pem")
     key_path.write_text(key_text)
     key_path.chmod(0o600)
@@ -167,9 +231,35 @@ def cmd_commits_public(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_commit_set_public(args: argparse.Namespace) -> int:
-    jprint(req("PATCH", f"/commits/{args.commit_id}", {"is_public": args.public}))
+def cmd_commit_edit(args: argparse.Namespace) -> int:
+    commit_id: str = str(args.commit_id)
+    public: bool | None = None if getattr(args, "public", None) is None else bool(args.public)
+    name: str | None = None if getattr(args, "name", None) is None else str(args.name)
+    description: str | None = (
+        None if getattr(args, "description", None) is None else str(args.description)
+    )
+
+    commits = parse_commits_list(req("GET", "/commits"))
+    cur = next((c for c in commits if c["commit_id"] == commit_id), None)
+    if cur is None:
+        print(f"commit {commit_id} not found", file=sys.stderr)
+        return 2
+    body: dict[str, Any] = {
+        "is_public": public if public is not None else cur["is_public"],
+        "name": name if name is not None else cur["name"],
+        "description": description if description is not None else cur["description"],
+    }
+    updated = parse_commit(req("PATCH", f"/commits/{commit_id}", body))
+    print(json.dumps(updated, indent=2))
     return 0
+
+
+def cmd_commit_set_public(args: argparse.Namespace) -> int:
+    # Route through cmd_commit_edit for symmetry with the generalized editor;
+    # only is_public needs to be sent, name/description are preserved by partial PATCH.
+    args.name = None
+    args.description = None
+    return cmd_commit_edit(args)
 
 
 def cmd_commit_delete(args: argparse.Namespace) -> int:
@@ -317,6 +407,13 @@ def main() -> int:
     p.add_argument("--public", action=argparse.BooleanOptionalAction, default=True,
                    help="default: true; --no-public to flip back to private")
 
+    p = sub.add_parser("commit-edit", help="PATCH /commits/{id} — update is_public/name/description; unspecified fields preserved")
+    p.add_argument("commit_id")
+    p.add_argument("--public", action=argparse.BooleanOptionalAction, default=None,
+                   help="set is_public; omit to keep current")
+    p.add_argument("--name", default=None, help="new name; omit to keep current")
+    p.add_argument("--description", default=None, help="new description; omit to keep current")
+
     p = sub.add_parser("commit-delete", help="DELETE /commits/{id}")
     p.add_argument("commit_id")
 
@@ -377,6 +474,7 @@ def main() -> int:
         "commits": cmd_commits,
         "commits-public": cmd_commits_public,
         "commit-set-public": cmd_commit_set_public,
+        "commit-edit": cmd_commit_edit,
         "commit-delete": cmd_commit_delete,
         "commit-parents": cmd_commit_parents,
         # Commit tags
