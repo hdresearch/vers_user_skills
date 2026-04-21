@@ -2,41 +2,39 @@
 name: use-vers-for-everything:onboarding
 description: >
   First-time setup for the Vers platform (vers.sh). Supplementary doc of the
-  `use-vers-for-everything` skill. Load when any Vers operation needs credentials
-  that are not present, when the user has no Vers account yet, when there is no
-  API key on this machine, when the `vers` CLI is not installed, or when an agent
-  needs its own credentials distinct from the user's primary account. Walks the
-  detect-state → choose-path → register/install/authenticate → verify flow.
-  Covers the programmatic shell-auth route (email + SSH key, no browser except the
-  verification link), the dashboard route, CLI install, the `+` alias pattern for
-  agent-specific accounts, and the smoke test that confirms auth works. Endpoint
-  shapes live in `api-reference.md` (sibling doc).
+  `use-vers-for-everything` skill. Load when no Vers API key is present, when
+  the user has no Vers account yet, when the `vers` CLI is not installed, or
+  when an agent needs its own credentials distinct from the user's primary
+  account. Owns the detect-state, shell-auth, persist, verify flow. Shell-auth
+  request/response shapes are inline with the steps that use them.
 metadata:
   author: Carter Schonwald
-  version: 1
+  version: 2
   source: https://docs.vers.sh/start-here/setting-up-cli
 ---
 
 # Onboarding to Vers
 
-First-time setup. This fires once per user per machine (or once per agent
-identity). After a successful run the caller should have:
+This doc owns first-run auth. Nothing else in the skill set works without it.
+
+The successful exit state is three things together:
 
 - A Vers account (created or existing).
-- An API key on this machine — either in `$VERS_API_KEY` or at `~/.versrc`.
-- Optionally, the `vers` CLI installed at `/usr/local/bin/vers`.
-- A passing smoke test.
+- An API key reachable as `$VERS_API_KEY` or at `~/.versrc` (mode `0600`).
+- A smoke test that actually returned `200` against the live API.
+
+Onboarding is a one-time cost per user per machine (or once per agent identity).
+On a machine where all three conditions already hold, detect state and exit.
 
 ---
 
 ## Detect state first
 
-Before doing anything, check what already exists. Most of the time you do not
-need to onboard at all — an agent loading this skill on a machine that already
-has credentials should short-circuit.
+Before any new API call, check what already exists. Re-onboarding a working
+machine wastes a verification email and corrupts the audit trail.
 
 ```bash
-# 1. Is an API key in the environment?
+# 1. Is a key in the environment?
 [ -n "$VERS_API_KEY" ] && echo "env key present"
 
 # 2. Is a key persisted for the CLI?
@@ -45,101 +43,40 @@ has credentials should short-circuit.
 # 3. Is the CLI installed?
 command -v vers >/dev/null && vers --version
 
-# 4. Smoke-test whatever key you found (see "Verify" below).
+# 4. Smoke-test any key you found.
+curl -sS -H "Authorization: Bearer ${VERS_API_KEY:-$(cat ~/.versrc 2>/dev/null)}" \
+  https://api.vers.sh/api/v1/vms | head -c 200
+# Expect a JSON array (possibly empty). 401 means the key is dead.
 ```
 
-Decision tree:
+Outcomes:
 
-- Env key + smoke passes → **done.** Do not re-onboard.
-- `~/.versrc` present + smoke passes → **done.** Export to env if the caller
-  needs `$VERS_API_KEY` (`export VERS_API_KEY=$(cat ~/.versrc)`).
-- Nothing present → **full onboarding** (below).
-- Key present but smoke fails → the key is stale, revoked, or wrong org. Treat
-  as no key; re-onboard or ask the user.
+- **Env key or `~/.versrc` present and smoke passes** → stop here, return
+  success, do not onboard.
+- **Nothing present** → run the fast path below.
+- **Key present but smoke fails `401`/`403`** → the key is stale, revoked, or
+  for the wrong org. Treat as no key. Ask the user before re-onboarding: a
+  stale `~/.versrc` usually means something they used to rely on.
 
 ---
 
-## Choose a path
+## Fast path — programmatic shell-auth
 
-Three routes. Pick by context.
+This is the agent-preferred route. No browser except the one click on the
+verification email. Works headless on a server once the link is clicked.
 
-### A. Programmatic shell-auth (agent-preferred)
-
-No browser except the one click on the verification email. Works headless on a
-server once the user clicks the link in their inbox. Returns an API key you
-can use immediately.
-
-Use when: agent is driving, user can be asked for an email and to click a link,
-no existing key on the machine. This is the right default for
-coding-agent sessions.
-
-### B. Dashboard signup + manual key
-
-User goes to `https://vers.sh`, signs up via the web, creates an API key at
-`https://vers.sh/billing`, pastes it into `vers login` (or `export VERS_API_KEY=`).
-
-Use when: user prefers the web flow, corporate SSO/SAML is in play, or the
-programmatic flow has hit an edge case.
-
-### C. `vers init` (CLI-driven)
-
-If the CLI is installed, `vers init` inside a project directory prompts the
-user through auth on first run. Convenient for developers already in a
-terminal.
-
-Use when: user is hands-on and wants CLI-first. The CLI invokes the same
-shell-auth machinery underneath.
-
----
-
-## Install the CLI (optional but recommended)
-
-API-only use does not strictly require the CLI. Install it when the user or
-agent will want `vers run`, `vers branch`, `vers commit`, etc.
-
-```bash
-# macOS / Linux — production binary
-curl -sSL https://vers.sh/api/install | bash
-# Installs to /usr/local/bin/vers; may prompt for sudo.
-
-# Verify
-vers --version
-# → v0.5.x or similar
-```
-
-Build from source (when package manager unavailable or air-gapped):
-
-```bash
-git clone https://github.com/hdresearch/vers-cli.git
-cd vers-cli && make build-and-install
-```
-
-Surface the install to the user before running it — it writes to
-`/usr/local/bin`. Do not run it silently.
-
----
-
-## Programmatic shell-auth flow (Route A, full)
-
-> **Scope note.** Shell Auth lives at `https://vers.sh/api/shell-auth/*` — **outside**
-> the canonical `/api/v1` orchestrator OpenAPI. The shapes and status codes cited in
-> this section reflect `docs.vers.sh/shell-auth` prose docs at time of writing.
->
-> This section is the operational recipe: what to do, in what order, with what hygiene.
-> For request/response field shapes and error codes, see `api-reference.md` § Shell
-> Auth (sibling doc). This doc owns the walkthrough; that doc owns the wire format.
-
-Three API calls. The user's only manual step is clicking the verification link
-in their email.
+The flow is three API calls plus a persist step. The user's only manual step
+is clicking the link in their inbox.
 
 ### Step 0 — Prepare an SSH key
 
-Shell-auth binds an API key to an SSH public key. Use an existing key or
-generate a fresh one for this agent identity:
+Shell-auth binds one API key to one SSH public key. Use an existing key or
+generate a dedicated agent key. A fresh key is the right default when the
+caller is an agent: revoking it later is surgical.
 
 ```bash
-# Use existing
-cat ~/.ssh/id_ed25519.pub
+# Use an existing key
+PUBKEY=$(cat ~/.ssh/id_ed25519.pub)
 
 # Or generate a dedicated agent key
 ssh-keygen -t ed25519 -f ~/.ssh/vers_agent -N "" -C "vers-agent@$(hostname)"
@@ -147,8 +84,8 @@ PUBKEY=$(cat ~/.ssh/vers_agent.pub)
 ```
 
 Each SSH public key is uniquely bound to one Vers account. If the key is
-already registered elsewhere, the API returns 409 — pick a different key or
-generate a fresh one.
+already registered somewhere else, Step 1 returns `409` — generate a fresh
+one, do not try to reuse.
 
 ### Step 1 — Initiate
 
@@ -157,21 +94,23 @@ EMAIL="you@example.com"
 curl -sS -X POST https://vers.sh/api/shell-auth \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMAIL\",\"ssh_public_key\":\"$PUBKEY\"}"
+# → { "is_new_user": bool, "nonce": "...", ... }
 ```
 
-This sends a verification email. For new emails, shell-auth creates the account;
-on verification an organization + free subscription are provisioned automatically.
-For existing users, the SSH key is registered against the account.
+For new emails this creates the account and provisions an organization + free
+subscription on verification. For existing users the SSH key is registered
+against the existing account.
 
-Response includes `is_new_user` (whether this is a first-time user) and a nonce.
-
-Tell the user: "Check your inbox for a verification email from Vers and click
-the link."
+Then tell the user, verbatim: *"Check your inbox for a verification email from
+Vers and click the link."* Do not guess at their address; do not read it from
+git config without asking.
 
 ### Step 2 — Poll until verified
 
+The user clicks the link. Your job is to notice they did.
+
 ```bash
-DEADLINE=$(( $(date +%s) + 600 ))   # give the user 10 minutes to click
+DEADLINE=$(( $(date +%s) + 600 ))   # 10 min to click
 while :; do
   HTTP=$(curl -sS -o /tmp/vers_verify.json -w '%{http_code}' \
     -X POST https://vers.sh/api/shell-auth/verify-key \
@@ -183,179 +122,165 @@ while :; do
         break
       fi
       ;;
-    401)
-      # Expected during polling: user hasn't clicked the verification email link yet.
-      # Keep polling until 200 or $DEADLINE.
-      ;;
+    401) : ;;  # expected during poll — user has not clicked yet
     403)
-      echo "auth rejected (403); likely alias / base-account gate — pick a different email/key" >&2
-      exit 1
-      ;;
-    5*)
-      echo "server error ($HTTP); will retry briefly" >&2 ;;
-    *)
-      echo "unexpected status $HTTP" >&2 ;;
+      echo "auth rejected (403): base account for this +alias is not verified yet, or the key/email pair is wrong" >&2
+      exit 1 ;;
+    5*) echo "server error ($HTTP); retrying" >&2 ;;
+    *)  echo "unexpected status $HTTP" >&2 ;;
   esac
-  if [ "$(date +%s)" -gt "$DEADLINE" ]; then
-    echo "verify timed out after 10 min; last status $HTTP" >&2
-    exit 1
-  fi
+  [ "$(date +%s)" -gt "$DEADLINE" ] && { echo "verify timed out after 10 min; last status $HTTP" >&2; exit 1; }
   sleep 3
 done
+# verify response: { "verified": true, "user_id": "...", "key_id": "...",
+#                    "is_active": true, "orgs": [ { "name": "...", ... } ] }
 ```
 
-The verify response carries `user_id`, `key_id`, `is_active`, and an `orgs[]`
-array once the user has clicked through.
+Named failure modes:
+
+- `401` during poll → the normal "not yet" signal. Keep polling.
+- `403` during poll → real rejection. Almost always: a `+alias` whose base
+  account is not verified, or a mismatch between `email` and `ssh_public_key`.
+  Do not retry with the same inputs.
+- Timeout → the user never clicked. Ask them before restarting.
 
 ### Step 3 — Create the API key
 
 ```bash
-API_KEY=$(curl -sS -X POST https://vers.sh/api/shell-auth/api-keys \
+VERS_API_KEY=$(curl -sS -X POST https://vers.sh/api/shell-auth/api-keys \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMAIL\",\"ssh_public_key\":\"$PUBKEY\",
        \"label\":\"agent-$(hostname)-$(date +%Y%m%d)\",
-       \"org_name\":\"<org-from-verify-response>\"}" \
+       \"org_name\":\"<org-from-verify-response.orgs[0].name>\"}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["api_key"])')
+# create-key response: { "success": true, "api_key": "...",
+#                        "api_key_id": "...", "org_id": "...", "org_name": "..." }
 ```
 
-The API key is **shown once**. Persist it immediately:
+The `api_key` is shown once. If you lose it before Step 4, you run shell-auth
+again and orphan the unused key.
+
+Label it descriptively. `agent-<hostname>-<yyyymmdd>` is a good default —
+future audits have to find this key.
+
+### Step 4 — Persist the key safely
+
+The file must never exist world-readable, not even for the millisecond between
+`printf` and `chmod`. Open the write under a strict umask instead.
 
 ```bash
-# Option 1: .versrc for the CLI
-printf '%s' "$API_KEY" > ~/.versrc && chmod 600 ~/.versrc
+# Option 1: ~/.versrc for the CLI (most portable)
+( umask 077 && printf '%s' "$VERS_API_KEY" > ~/.versrc )
 
-# Option 2: environment for API-only use
-export VERS_API_KEY="$API_KEY"
-# Add to shell rc for persistence across sessions.
+# Option 2: env only (in-memory for this process + children)
+export VERS_API_KEY
+# Add to shell rc if future sessions should inherit it.
 ```
 
-If you skip this step you will need to re-run shell-auth to create another key.
+Do not put the key in `.bashrc`/`.zshrc` unless the caller explicitly asked
+for it. Those files are often world-readable and frequently version-controlled.
+
+### Step 5 — Verify (smoke test)
+
+Do not yield control before a 200. The key existing is not the same thing as
+the key working.
+
+```bash
+curl -sS -H "Authorization: Bearer $VERS_API_KEY" \
+  https://api.vers.sh/api/v1/vms
+# Expect: a JSON array (possibly empty).
+# 401 → the key is wrong or already revoked. Something went sideways in steps 1-3.
+# 403 → the key is fine but the account does not have access to /vms in this org.
+# 409 only appears during key registration, not here.
+```
+
+After this passes, onboarding is complete.
 
 ---
 
-## Agent-specific accounts (the `+` alias pattern)
+## Agent-specific accounts (the `+alias` pattern)
 
-When an agent needs its own credentials distinct from the user's primary
-account — for audit separation, blast-radius isolation, or so revoking the
-agent key doesn't kick the user out — use email-plus-aliasing:
+Use when the agent needs its own credentials distinct from the user's primary
+account — audit separation, blast-radius isolation, or so revoking the agent
+key doesn't log the user out.
 
 ```
 primary:  alice@company.com
-agent:    alice+agent@company.com   (shares alice's organizations)
+agent:    alice+agent@company.com    # shares alice's organizations
 ```
 
-The primary account (`alice@company.com`) must already exist and be verified.
-Then run the shell-auth flow with the `+agent` address and a dedicated SSH
-key. The agent gets its own user record, its own API key, and sees the same
-organizations as the primary.
+The primary (`alice@company.com`) must already be verified. Then run the fast
+path with the `+agent` address and a dedicated SSH key. The agent gets its
+own user record, its own API key, and sees the same orgs the primary does.
+
+UX note to surface: the user will receive a second verification email at the
+`+alias` address (which most mail providers route into the primary inbox).
+Tell them to expect one more click.
 
 Revocation: deleting the agent key or user leaves the primary untouched.
 
 ---
 
-## Verify (smoke test)
+## Other routes
 
-After any route, confirm the key actually works before yielding control:
+Most agent sessions will take the fast path above. Two other routes exist when
+a human is in the loop:
+
+**Dashboard.** User signs up at `https://vers.sh`, creates a key at
+`https://vers.sh/billing`, and pastes it. Right when the user wants a web flow
+or corporate SSO/SAML is in play. The agent's job: ask for the pasted key,
+persist it per Step 4, then run Step 5.
+
+**`vers init` (CLI-driven).** If the CLI is installed and the user is
+hands-on in a terminal, `vers init` inside a project directory prompts them
+through auth on first run. Under the hood it runs the same shell-auth flow.
+
+Either route ends at the same place: a working key, persisted, smoke-tested.
+
+---
+
+## Install the CLI (optional)
+
+API-only workflows do not need the CLI. Install it when the caller will want
+`vers run`, `vers branch`, `vers commit`, etc., interactively.
 
 ```bash
-curl -sS -H "Authorization: Bearer $VERS_API_KEY" \
-  https://api.vers.sh/api/v1/vms
-# → JSON array (possibly empty). No 401/403.
-
-# Optional: health endpoint requires no auth but confirms network.
-# (`/health` is a platform convenience endpoint outside the canonical `/api/v1`
-#  surface; skip if unavailable.)
-curl -sS https://api.vers.sh/health
+# macOS / Linux — production binary (writes to /usr/local/bin, may prompt for sudo)
+curl -sSL https://vers.sh/api/install | bash
+vers --version
 ```
 
-A 401 means the key is wrong or revoked. A 403 on shell-auth typically means
-the base account for a `+alias` isn't verified yet. A 409 during key registration
-means the SSH key is already bound to another account.
-
----
-
-## Decision summary
-
-```
-detect state
-  env key or ~/.versrc present + smoke passes → done
-  otherwise → need onboarding
-     |
-     ├─ agent-driven, email available → Route A (shell-auth)
-     ├─ user prefers web/SSO            → Route B (dashboard)
-     └─ user hands-on in terminal       → Route C (vers init)
-         |
-         (CLI not installed? offer `curl … | bash` first)
-         |
-        persist key (~/.versrc 0600, or $VERS_API_KEY)
-         |
-        smoke test
-         |
-        done
-```
-
----
-
-## First SSH and first tools
-
-The first SSH session is the first proof the VM is usable for work. The default
-image is sparse; install the core tools you need before doing anything else. If
-you will serve a port, bind `::`. The proxy routes IPv6; `0.0.0.0` is
-unreachable from outside.
+Build from source when the package path is unavailable:
 
 ```bash
-# First connection: prove the VM is alive before bulk copy
-ssh -i /tmp/vers-{vm_id}.key \
-  -o StrictHostKeyChecking=no \
-  -o ProxyCommand="openssl s_client -connect %h:443 -servername %h -quiet 2>/dev/null" \
-  root@{vm_id}.vm.vers.sh 'echo alive && uname -a'
-
-# Then install the small core you actually need
-DEBIAN_FRONTEND=noninteractive apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync curl git build-essential
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq procps parallel || true
-which rsync curl git parallel free
+git clone https://github.com/hdresearch/vers-cli.git
+cd vers-cli && make build-and-install
 ```
 
-Treat `procps` / `parallel` configure errors on the default image as suspicious
-but not automatically fatal: verify the binaries before trusting the install.
+Surface the install before running it. A script that writes to
+`/usr/local/bin` is not something to run silently on someone else's machine.
 
 ---
 
+## Hygiene and anti-patterns
 
-## Hygiene
-
-- **Never log the API key.** Mask in any output. The shell-auth response is
-  a one-time disclosure.
-- **Chmod 600** on `~/.versrc` and any file containing the key.
-- **Surface the onboarding decision** to the user before starting it. Do not
-  silently create accounts or install binaries.
-- **Ask for email explicitly.** Do not guess from git config or environment
+- Never log the API key. Mask it in any output. The shell-auth response is a
+  one-time disclosure; a leaked log is a leaked key.
+- Open key files under `umask 077`. Do not rely on `chmod` after the fact.
+- Ask for the email explicitly. Do not guess from git config or environment
   without confirmation.
-- **One SSH key, one account.** Use a dedicated key per agent identity so
-  revocation is surgical.
-- **Label API keys descriptively** (`label:` field): e.g.,
-  `agent-<hostname>-<yyyymmdd>`. Future-you will want to audit.
-
----
-
-## Anti-patterns
-
-- Running `curl … | bash` without telling the user first.
-- Reading `~/.gitconfig` for the email and skipping the confirmation prompt.
-- Persisting the API key in `.bashrc`/`.zshrc` world-readable.
-- Creating multiple API keys per session when one would do.
-- Skipping the smoke test and then failing an hour later mid-workflow.
-- Silently re-onboarding when an existing key is present but a single API call
-  happened to 5xx.
+- One SSH key per agent identity. Makes revocation surgical.
+- Label keys descriptively. Future audits need a story.
+- Do not silently re-onboard because one API call 5xx'd. Detect-state first.
+- Do not persist the key in `.bashrc`/`.zshrc` unless asked.
 
 ---
 
 ## See also
 
-- `SKILL.md` — the top-level reach-for-Vers skill that depends on a working auth
-  state established here.
-- `api-reference.md` — shell-auth endpoint shapes (`/api/shell-auth`,
-  `/verify-key`, `/api-keys`, `/verify-public-key`) and error codes.
+- `SKILL.md` — top-level reach-for-Vers skill. Every Vers action it describes
+  assumes onboarding passed.
+- `api-cheatsheet.md` — full endpoint contract (VMs, commits, tags, domains,
+  env vars). Shell-auth is documented here in `onboarding.md`, not there.
 - Docs: `https://docs.vers.sh/start-here/setting-up-cli`,
   `https://docs.vers.sh/shell-auth/overview.md`.
