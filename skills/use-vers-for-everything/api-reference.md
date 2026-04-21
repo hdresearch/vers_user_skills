@@ -1,14 +1,14 @@
 ---
-name: vers-api-reference
+name: use-vers-for-everything:api-reference
 description: >
   Authoritative Vers platform API reference distilled from docs.vers.sh/llms-full.txt.
-  Covers VM lifecycle, commits, branching, SSH access, shell-auth, and CLI-to-API mapping.
-  Use when making any Vers API call or building agent tooling against the Vers platform.
+  Supplementary doc of the `use-vers-for-everything` skill. Covers VM lifecycle,
+  commits, branching, SSH access, shell-auth, and CLI-to-API mapping. Load when
+  making any Vers API call or building agent tooling against the Vers platform.
 metadata:
   author: Carter Schonwald
   version: 1
   source: https://docs.vers.sh/llms-full.txt
-  retrieved: 2026-03-26
 ---
 
 # Vers Platform API Reference
@@ -19,22 +19,22 @@ Full docs: `https://docs.vers.sh/llms-full.txt`
 
 ## Companion CLI
 
-`scripts/vers_api.py` (sibling to this skill) is a zero-dep Python wrapper over the
+`scripts/vers_api.py` (ships with this skill) is a zero-dep Python wrapper over the
 endpoints documented below. Agents may shell out to it instead of hand-crafting curl:
 
 ```bash
-VERS_API_KEY=... uv run scripts/vers_api.py vms
-VERS_API_KEY=... uv run scripts/vers_api.py new-root --mem 4096 --vcpu 2
+VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vms
+VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py new-root --mem 4096 --vcpu 2
 ```
 
 Use it when the ergonomics matter; fall through to raw HTTP for anything the wrapper
-doesn't cover (see `## Refreshing this reference` below for how it falls behind).
+doesn't cover. Full endpoint table: `api-cheatsheet.md` (sibling doc).
 
 ---
 
 ## Authentication
 
-All endpoints require `Authorization: Bearer <VERS_API_KEY>` except `/health`.
+All `/api/v1/*` endpoints require `Authorization: Bearer <VERS_API_KEY>`.
 
 Obtain key from:
 - `https://vers.sh/billing` (dashboard)
@@ -121,12 +121,14 @@ through `-e`; shell quoting is brittle there.
 
 | Method | Endpoint                              | Description                      |
 |--------|---------------------------------------|----------------------------------|
-| `POST` | `/vm/{vm_id}/branch`                  | Branch from running VM           |
+| `POST` | `/vm/{vm_or_commit_id}/branch`        | Branch from a VM or commit (generic; server dispatches by id type; `by_vm`/`by_commit` below are explicit variants) |
 | `POST` | `/vm/branch/by_commit/{commit_id}`    | Branch directly from a commit    |
 | `POST` | `/vm/branch/by_vm/{vm_id}`            | Branch from VM (explicit)        |
 | `POST` | `/vm/branch/by_tag/{tag_name}`        | Branch from commit tag           |
 
-Returns: `{ "vm_id": "<new-vm-uuid>" }`
+All branch endpoints accept `?count=N` (default 1) and return `NewVmsResponse`:
+`{ "vms": [ { "vm_id": "<new-vm-uuid>" }, ... ] }`. Read `.vms[0].vm_id` for
+the single-branch case.
 
 ---
 
@@ -173,12 +175,14 @@ Only `is_public` is required by the `UpdateCommitRequest` schema; `name` and
 ---
 
 ## Shell Auth (programmatic key creation for agents / CLI)
-> **Canonical operational recipe: `onboard-to-vers`.** The step-by-step walkthrough
-> (state detection, route selection, key persistence, smoke test, hygiene) lives in
-> `skills/onboard-to-vers/SKILL.md`. What follows below is the **call-layer truth**:
-> endpoint shapes, request/response fields, and error codes. When in doubt about
-> *how* to onboard an agent or user, read `onboard-to-vers`. When in doubt about
-> *what the endpoint expects*, stay here.
+> **Scope note.** Shell Auth lives at `https://vers.sh/api/shell-auth/*`, **outside** the
+> canonical `/api/v1` orchestrator OpenAPI. Shapes below reflect `docs.vers.sh/shell-auth`
+> prose docs at the time of writing. Verify before shipping code that depends on them.
+>
+> **Canonical operational recipe: `onboarding.md`** (sibling doc).
+> The step-by-step walkthrough (state detection, route selection, key persistence,
+> smoke test, hygiene) lives there. What follows below is the call-layer shape, as
+> extracted from supplementary docs.
 
 
 Three-step flow. Only browser interaction: clicking email link.
@@ -244,15 +248,15 @@ POST /api/shell-auth/verify-public-key  → lookup key by public key
 
 ---
 
-## Networking
+## Network contract
 
-- Public URL: `https://{vm_id}.vm.vers.sh:{port}`
-- All ports routable, no firewall config needed
-- TLS terminated at proxy; VM serves plain HTTP
-- **Must bind IPv6** (`::` not `0.0.0.0`) for proxy to route
-- SSH over TLS on port 443 (works through HTTPS-only firewalls)
-- VM-to-VM: same public URL pattern, no private network
-
+- Public URL: `https://{vm_id}.vm.vers.sh:{port}`.
+- All ports routable; no firewall config.
+- TLS terminates at the Vers proxy; the VM serves plain HTTP behind it.
+- Bind IPv6 (`::`). The proxy routes IPv6; `0.0.0.0` is unreachable from outside.
+- WebSockets reach a VM at `wss://{vm_id}.vm.vers.sh:{port}` when the service binds `::`.
+- SSH-over-TLS on port 443. Works through HTTPS-only egress.
+- VM-to-VM: same public URL pattern. No private VPC.
 ---
 
 ## Response shapes
@@ -261,8 +265,11 @@ POST /api/shell-auth/verify-public-key  → lookup key by public key
 // GET /vms
 [{"vm_id": "...", "owner_id": "...", "created_at": "...", "state": "running"}]
 
-// POST /vm/{id}/branch or /vm/from_commit or /vm/new_root
+// POST /vm/from_commit or /vm/new_root
 {"vm_id": "<new-uuid>"}
+
+// POST /vm/{id}/branch or /vm/branch/by_{vm,commit,tag,ref}/...
+{"vms": [{"vm_id": "<new-uuid>"}, ...]}
 
 // POST /vm/{id}/commit
 {"commit_id": "<uuid>"}
@@ -275,13 +282,9 @@ POST /api/shell-auth/verify-public-key  → lookup key by public key
 
 ## Refreshing this reference
 
-This skill is a distillation of `docs.vers.sh/llms-full.txt` at the `retrieved:`
-timestamp in the frontmatter. The upstream changes; this file doesn't unless someone
-refreshes it. Do so when: (a) an endpoint below returns a surprising error, (b) the
-Vers changelog or docs add a new endpoint the skills don't cover, (c) quarterly as
-hygiene.
-
-Recipe:
+This skill distills `docs.vers.sh/llms-full.txt`. Refresh when an endpoint
+below returns a surprising error, when the Vers changelog adds a new endpoint,
+or quarterly as hygiene.
 
 ```bash
 # 1. Pull current source of truth
@@ -297,15 +300,15 @@ grep -E '^# (Post|Get|Put|Patch|Delete) apiv1' /tmp/vers-docs.new.txt | sort -u
 #    → shows request/response schemas the llms-full.txt omits
 
 # 4. Update this file's tables + request/response examples
-# 5. Bump frontmatter: version + retrieved (YYYY-MM-DD)
-# 6. Run the eval harness (tests/vers_skills_eval_prompts.md) against the three
-#    skills as a regression smoke test
+# 5. Run the eval harness (tests/vers_skills_eval_prompts.md) against this
+#    skill as a regression smoke test
 ```
 
-Known un-documented-here surface as of latest review: `/repositories` (+ tags, fork,
-visibility), `/public/repositories`, `/vm/branch/by_ref`, `/vm/{id}/files` (PUT/GET),
-`/vm/{id}/exec`, `/vm/{id}/execstream`, `/vm/{id}/logs`, `/domains`, `/env_vars`.
-These are staged for v2.
+For fuller endpoint coverage than the tables above, see `api-cheatsheet.md`
+(same repo): `/repositories` (+ tags, fork, visibility), `/public/repositories`,
+`/vm/branch/by_ref`, `/vm/{id}/files` (PUT/GET), `/vm/{id}/exec`,
+`/vm/{id}/exec/stream`, `/vm/{id}/exec/stream/attach`, `/vm/{id}/logs`, `/domains`,
+`/env_vars`.
 
 ---
 

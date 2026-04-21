@@ -1,14 +1,16 @@
 # Vers Skills — Subagent Evaluation Prompts
 
 Author: Carter Schonwald
-Skills under test:
-- `offload-to-vers` (reach layer, top-level entry)
-- `onboard-to-vers` (setup layer)
-- `vers-api-reference` (call layer)
+Skill under test:
+- `use-vers-for-everything` — single skill with supplementary docs:
+  - `SKILL.md` (reach layer, top-level entry)
+  - `onboarding.md` (setup layer)
+  - `api-reference.md` (call layer)
+  - `api-cheatsheet.md` (full endpoint table)
 
 ## How to run
 
-Hand each prompt to a fresh subagent with the three SKILL.md files available in its context or filesystem. Do **not** tell the subagent what the right answer is. Collect its plan-of-action and compare against the rubric.
+Hand each prompt to a fresh subagent with the `use-vers-for-everything` skill directory available in its context or filesystem. Do **not** tell the subagent what the right answer is. Collect its plan-of-action and compare against the rubric.
 
 Pass criteria for the skill suite as a whole:
 - Positive-reach tests: subagent reaches for Vers AND cites the right primitive.
@@ -148,11 +150,6 @@ Each test carries **trap answers** — responses that look plausible but indicat
 
 ## Category 4 — Edge cases / gotchas
 
-### T4.1 — Cross-architecture mismatch
-**Env:** Key set. User has an M-series Mac (aarch64). Earlier session tagged a warm base committed on x86_64.
-**User:** "Use that warm base for this build."
-**Expected:** Read `host_architecture` field on commit. Recognize mismatch. Explain that x86_64 commits don't branch to aarch64 hardware. Propose rebuilding the warm base on aarch64 (and tagging with arch-suffixed name).
-**Trap answers:** Blindly calls `from_commit` and reports cryptic failure.
 
 ### T4.2 — IPv6 bind gotcha
 **Env:** Key set. User running a dev server on Vers, port appears dead from outside.
@@ -185,8 +182,8 @@ Each test carries **trap answers** — responses that look plausible but indicat
 ### T5.1 — Which skill fires first
 **Env:** Fresh coordinator agent, no context yet.
 **User:** "I need to run this big build somewhere that isn't my laptop."
-**Expected:** `offload-to-vers` fires on the description match. If auth isn't set, that skill delegates to `onboard-to-vers`. API detail questions go to `vers-api-reference`. Coordinator should not try to load all three preemptively — load on-demand.
-**Trap answers:** Loads all three upfront; loads `vers-api-reference` first (it's a detail layer, not an entry point).
+**Expected:** `use-vers-for-everything` fires on the description match. If auth isn't set, SKILL.md redirects to `onboarding.md`. API detail questions go to `api-reference.md`. Coordinator should not try to load all supplementary docs preemptively — load on-demand.
+**Trap answers:** Loads every supplementary doc upfront; loads `api-reference.md` first (it's a detail layer, not an entry point).
 
 ### T5.2 — Confusing user phrasing
 **Env:** Key set.

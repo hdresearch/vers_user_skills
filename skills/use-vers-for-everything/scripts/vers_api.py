@@ -1,18 +1,24 @@
 #!/usr/bin/env -S uv run --script
+#
+# This script is run via `uv`. Install uv once:
+#   curl -LsSf https://astral.sh/uv/install.sh | sh
+# Docs: https://docs.astral.sh/uv/
+#
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.14"
 # dependencies = []
 # ///
 
 """Vers REST API wrapper — endpoints from docs.vers.sh/llms-full.txt.
 
-Covers the surface the sibling skills (offload-to-vers, onboard-to-vers,
-vers-api-reference) reference: VM lifecycle, commits + parents, commit
-tags, shell-auth, VM metadata, disk resize.
+Covers VM lifecycle, commits + parents, commit tags, shell-auth, VM
+metadata, and disk resize.
 
-Surface staged for a v2 pass (not yet exposed here): repositories,
-public_repositories, branch/by_ref, vm/files, vm/exec, vm/logs, domains,
-env_vars. Fall through to raw `curl` + Bearer for those until then.
+Endpoints served by raw HTTPS + Bearer: repositories, public_repositories,
+branch/by_ref, vm/files, vm/exec (+ /stream, /stream/attach), vm/logs,
+domains, env_vars. Use ``curl -H "Authorization: Bearer $VERS_API_KEY"``
+against the paths documented in ``api-cheatsheet.md`` (sibling of this script's
+parent directory).
 """
 
 from __future__ import annotations
@@ -365,7 +371,7 @@ def main() -> int:
     p = sub.add_parser("vm-metadata", help="GET /vm/{id}/metadata")
     p.add_argument("vm_id")
 
-    p = sub.add_parser("vm-new", help="POST /vm/new_root")
+    p = sub.add_parser("vm-new", aliases=["new-root"], help="POST /vm/new_root")
     p.add_argument("--mem", type=int, default=4096)
     p.add_argument("--vcpu", type=int, default=2)
     p.add_argument("--disk", type=int, default=8192)

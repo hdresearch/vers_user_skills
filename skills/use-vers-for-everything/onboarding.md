@@ -1,24 +1,23 @@
 ---
-name: onboard-to-vers
+name: use-vers-for-everything:onboarding
 description: >
-  First-time setup for the Vers platform (vers.sh). Load when `offload-to-vers`
-  or any Vers operation needs credentials that are not present, when the user
-  has no Vers account yet, when there is no API key on this machine, when the
-  `vers` CLI is not installed, or when an agent needs its own credentials
-  distinct from the user's primary account. Walks the detect-state → choose-path
-  → register/install/authenticate → verify flow. Covers the programmatic
-  shell-auth route (email + SSH key, no browser except the verification link),
-  the dashboard route, CLI install, the `+` alias pattern for agent-specific
-  accounts, and the smoke test that confirms auth works. Delegates endpoint
-  details to `vers-api-reference`.
+  First-time setup for the Vers platform (vers.sh). Supplementary doc of the
+  `use-vers-for-everything` skill. Load when any Vers operation needs credentials
+  that are not present, when the user has no Vers account yet, when there is no
+  API key on this machine, when the `vers` CLI is not installed, or when an agent
+  needs its own credentials distinct from the user's primary account. Walks the
+  detect-state → choose-path → register/install/authenticate → verify flow.
+  Covers the programmatic shell-auth route (email + SSH key, no browser except the
+  verification link), the dashboard route, CLI install, the `+` alias pattern for
+  agent-specific accounts, and the smoke test that confirms auth works. Endpoint
+  shapes live in `api-reference.md` (sibling doc).
 metadata:
   author: Carter Schonwald
   version: 1
-  depends_on: vers-api-reference
   source: https://docs.vers.sh/start-here/setting-up-cli
 ---
 
-# onboard-to-vers
+# Onboarding to Vers
 
 First-time setup. This fires once per user per machine (or once per agent
 identity). After a successful run the caller should have:
@@ -122,11 +121,13 @@ Surface the install to the user before running it — it writes to
 
 ## Programmatic shell-auth flow (Route A, full)
 
-> This section is the **operational recipe**: what to do, in what order, with what
-> hygiene. For endpoint request/response shapes, error codes (400/403/409), and the
-> `body` / `is_new_user` / `is_active` / `key_id` response fields, see
-> `vers-api-reference` § Shell Auth. This skill owns the walkthrough; that skill
-> owns the wire format.
+> **Scope note.** Shell Auth lives at `https://vers.sh/api/shell-auth/*` — **outside**
+> the canonical `/api/v1` orchestrator OpenAPI. The shapes and status codes cited in
+> this section reflect `docs.vers.sh/shell-auth` prose docs at time of writing.
+>
+> This section is the operational recipe: what to do, in what order, with what hygiene.
+> For request/response field shapes and error codes, see `api-reference.md` § Shell
+> Auth (sibling doc). This doc owns the walkthrough; that doc owns the wire format.
 
 Three API calls. The user's only manual step is clicking the verification link
 in their email.
@@ -182,10 +183,14 @@ while :; do
         break
       fi
       ;;
-    401|403)
-      echo "auth rejected ($HTTP); check email/key, do not retry blindly" >&2; exit 1 ;;
-    409)
-      echo "SSH key already bound to another account; pick a different key" >&2; exit 1 ;;
+    401)
+      # Expected during polling: user hasn't clicked the verification email link yet.
+      # Keep polling until 200 or $DEADLINE.
+      ;;
+    403)
+      echo "auth rejected (403); likely alias / base-account gate — pick a different email/key" >&2
+      exit 1
+      ;;
     5*)
       echo "server error ($HTTP); will retry briefly" >&2 ;;
     *)
@@ -257,7 +262,9 @@ curl -sS -H "Authorization: Bearer $VERS_API_KEY" \
   https://api.vers.sh/api/v1/vms
 # → JSON array (possibly empty). No 401/403.
 
-# Optional: health endpoint requires no auth but confirms network
+# Optional: health endpoint requires no auth but confirms network.
+# (`/health` is a platform convenience endpoint outside the canonical `/api/v1`
+#  surface; skip if unavailable.)
 curl -sS https://api.vers.sh/health
 ```
 
@@ -291,13 +298,10 @@ detect state
 
 ## First SSH and first tools
 
-After onboarding, the first SSH session is the first real proof that the machine is
-usable for work. One caveat matters immediately:
-
-- The default image is sparse. Expect to install core tools explicitly before doing
-  real work.
-
-A safe first pass looks like:
+The first SSH session is the first proof the VM is usable for work. The default
+image is sparse; install the core tools you need before doing anything else. If
+you will serve a port, bind `::`. The proxy routes IPv6; `0.0.0.0` is
+unreachable from outside.
 
 ```bash
 # First connection: prove the VM is alive before bulk copy
@@ -313,8 +317,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq procps parallel || true
 which rsync curl git parallel free
 ```
 
-Treat `procps` / `parallel` configure errors on the default image as suspicious but
-not automatically fatal: verify the binaries before trusting the install.
+Treat `procps` / `parallel` configure errors on the default image as suspicious
+but not automatically fatal: verify the binaries before trusting the install.
 
 ---
 
@@ -349,9 +353,9 @@ not automatically fatal: verify the binaries before trusting the install.
 
 ## See also
 
-- `offload-to-vers` — the top-level reach-for-Vers skill that depends on a
-  working auth state established here.
-- `vers-api-reference` — full shell-auth endpoint shapes (`/api/shell-auth`,
+- `SKILL.md` — the top-level reach-for-Vers skill that depends on a working auth
+  state established here.
+- `api-reference.md` — shell-auth endpoint shapes (`/api/shell-auth`,
   `/verify-key`, `/api-keys`, `/verify-public-key`) and error codes.
 - Docs: `https://docs.vers.sh/start-here/setting-up-cli`,
   `https://docs.vers.sh/shell-auth/overview.md`.

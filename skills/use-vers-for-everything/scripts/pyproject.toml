@@ -1,0 +1,28 @@
+# Scripts shipped with the use-vers-for-everything skill.
+#
+# Runtime: every script here is invoked via `uv`. Install uv once:
+#   curl -LsSf https://astral.sh/uv/install.sh | sh
+#
+# Dev: run the strict type-check locally with
+#   uv run --group dev basedpyright
+# or
+#   uvx basedpyright
+
+[project]
+name = "use-vers-for-everything-scripts"
+version = "0.0.0"
+description = "Scripts shipped with the use-vers-for-everything skill."
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["basedpyright>=1.18"]
+
+[tool.pyright]
+include = ["vers_api.py"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "error"
+reportImplicitOverride = "error"
+# CLI dispatchers routinely ignore subcommand handler return values; opt in later.
+reportUnusedCallResult = "none"
