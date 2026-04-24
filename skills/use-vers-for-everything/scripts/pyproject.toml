@@ -24,5 +24,12 @@ pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = "error"
 reportImplicitOverride = "error"
-# CLI dispatchers routinely ignore subcommand handler return values; opt in later.
+reportUnusedCallResult = "none"
+
+[tool.basedpyright]
+include = ["vers_api.py"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "error"
+reportImplicitOverride = "error"
 reportUnusedCallResult = "none"

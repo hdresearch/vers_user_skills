@@ -1,34 +1,36 @@
 ---
 name: use-vers-for-everything:api-reference
 description: >
-  Authoritative Vers platform API reference distilled from docs.vers.sh/llms-full.txt.
-  Supplementary doc of the `use-vers-for-everything` skill. Covers VM lifecycle,
-  commits, branching, SSH access, shell-auth, and CLI-to-API mapping. Load when
-  making any Vers API call or building agent tooling against the Vers platform.
+  Call-layer guide for Vers Router. Load when you need wrapper usage, SSH-over-TLS
+  details, or concise request/response examples after selecting an operation. The
+  exhaustive public endpoint contract is `api-cheatsheet.md`; first-run auth is
+  `onboarding.md`.
 metadata:
   author: Carter Schonwald
   version: 1
   source: https://docs.vers.sh/llms-full.txt
 ---
 
-# Vers Platform API Reference
+# Vers Call-Layer Guide
 
 Base URL: `https://api.vers.sh/api/v1`
-Docs index: `https://docs.vers.sh/llms.txt`
-Full docs: `https://docs.vers.sh/llms-full.txt`
+Public docs index: `https://docs.vers.sh/llms.txt`
+Public OpenAPI: `https://docs.vers.sh/api-reference/openapi.json`
 
-## Companion CLI
+## Companion wrapper
 
-`scripts/vers_api.py` (ships with this skill) is a zero-dep Python wrapper over the
-endpoints documented below. Agents may shell out to it instead of hand-crafting curl:
+`scripts/vers_api.py` (ships with this skill) is the preferred agent-facing wrapper
+for the public API operations used by Vers Router: lifecycle, exec/stream/logs/files,
+commits/tags, repositories/repo-tags/public repos, domains, env vars, and shell-auth.
 
 ```bash
 VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vms
-VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py new-root --mem 4096 --vcpu 2
+VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vm-new --mem 4096 --vcpu 2
+VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vm-exec <vm_id> --shell 'uname -a'
 ```
 
-Use it when the ergonomics matter; fall through to raw HTTP for anything the wrapper
-doesn't cover. Full endpoint table: `api-cheatsheet.md` (sibling doc).
+Use raw HTTPS for emergency debugging or for new endpoints before the wrapper is refreshed.
+The full public endpoint contract lives in `api-cheatsheet.md`.
 
 ---
 

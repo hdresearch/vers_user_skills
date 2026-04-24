@@ -2,11 +2,12 @@
 
 Author: Carter Schonwald
 Skill under test:
-- `use-vers-for-everything` — single skill with supplementary docs:
-  - `SKILL.md` (reach layer, top-level entry)
-  - `onboarding.md` (setup layer)
-  - `api-reference.md` (call layer)
-  - `api-cheatsheet.md` (full endpoint table)
+- `use-vers-for-everything` — Vers Router skill package:
+  - `SKILL.md` (hair-trigger router: reach gate, entity map, primitive routing)
+  - `patterns.md` (operating loops: bake, fan-out, repro, ingress, cleanup)
+  - `onboarding.md` (setup/auth layer)
+  - `api-cheatsheet.md` (public endpoint contract table)
+  - `api-reference.md` (call-layer guide / wrapper notes)
 
 ## How to run
 
@@ -16,7 +17,7 @@ Pass criteria for the skill suite as a whole:
 - Positive-reach tests: subagent reaches for Vers AND cites the right primitive.
 - Negative-reach tests: subagent keeps it local AND explicitly rejects Vers with the correct reason (not silently).
 - Onboarding tests: subagent detects state, picks the right route, asks user before creating accounts or installing binaries.
-- Edge tests: subagent surfaces the gotcha (arch mismatch, IPv6 bind, sensitive data, etc.) rather than blindly proceeding.
+- Edge tests: subagent surfaces the gotcha (IPv6 bind, sensitive data, local auth, orphan cleanup, etc.) rather than blindly proceeding.
 
 Each test carries **trap answers** — responses that look plausible but indicate the skill didn't teach what it should have.
 
@@ -182,8 +183,8 @@ Each test carries **trap answers** — responses that look plausible but indicat
 ### T5.1 — Which skill fires first
 **Env:** Fresh coordinator agent, no context yet.
 **User:** "I need to run this big build somewhere that isn't my laptop."
-**Expected:** `use-vers-for-everything` fires on the description match. If auth isn't set, SKILL.md redirects to `onboarding.md`. API detail questions go to `api-reference.md`. Coordinator should not try to load all supplementary docs preemptively — load on-demand.
-**Trap answers:** Loads every supplementary doc upfront; loads `api-reference.md` first (it's a detail layer, not an entry point).
+**Expected:** `use-vers-for-everything` fires on the description match. `SKILL.md` runs the reach gate first, then routes: missing auth → `onboarding.md`; operating loop → `patterns.md`; endpoint contract → `api-cheatsheet.md`; wrapper/SSH detail → `api-reference.md`. Coordinator should not load all supplementary docs preemptively — load on-demand.
+**Trap answers:** Loads every supplementary doc upfront; loads call-layer/API docs before the reach gate; provisions a VM before surfacing the footprint.
 
 ### T5.2 — Confusing user phrasing
 **Env:** Key set.
@@ -215,6 +216,6 @@ Aggregate:
 
 ## Running the suite
 
-Recommended: use the `task` tool with `quick_task` agents, one per test, so each gets a fresh context. Provide the three SKILL.md files as the shared context. Collect plans. Score.
+Recommended: use the `task` tool with `quick_task` agents, one per test, so each gets a fresh context. Provide the skill package files as shared context. Collect plans. Score.
 
 If a test fails repeatedly across subagents, the skill doc has a gap — the prompt is a regression test for the skill itself.
