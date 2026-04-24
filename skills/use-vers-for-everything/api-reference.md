@@ -19,14 +19,14 @@ Public OpenAPI: `https://docs.vers.sh/api-reference/openapi.json`
 
 ## Companion wrapper
 
-`scripts/vers_api.py` (ships with this skill) is the preferred agent-facing wrapper
+`vers_api.py` (ships with this skill) is the preferred agent-facing wrapper
 for the public API operations used by Vers Router: lifecycle, exec/stream/logs/files,
 commits/tags, repositories/repo-tags/public repos, domains, env vars, and shell-auth.
 
 ```bash
-VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vms
-VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vm-new --mem 4096 --vcpu 2
-VERS_API_KEY=... uv run skills/use-vers-for-everything/scripts/vers_api.py vm-exec <vm_id> --shell 'uname -a'
+VERS_API_KEY=... uv run skills/use-vers-for-everything/vers_api.py vms
+VERS_API_KEY=... uv run skills/use-vers-for-everything/vers_api.py vm-new --mem 4096 --vcpu 2
+VERS_API_KEY=... uv run skills/use-vers-for-everything/vers_api.py vm-exec <vm_id> --shell 'uname -a'
 ```
 
 Use raw HTTPS for emergency debugging or for new endpoints before the wrapper is refreshed.

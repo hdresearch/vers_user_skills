@@ -135,7 +135,7 @@ Do not load every file up front. Load the next document only when its condition 
 3. If choosing an operating loop: `patterns.md`.
 4. If making an endpoint call: `api-cheatsheet.md`.
 5. If wrapper / SSH / call-layer detail is needed: `api-reference.md`.
-6. Prefer `scripts/vers_api.py` for supported API operations; use raw HTTPS only for emergency debugging or newly-added endpoints not yet wrapped.
+6. Prefer `vers_api.py` for supported API operations; use raw HTTPS only for emergency debugging or newly-added endpoints not yet wrapped.
 
 ---
 
@@ -145,4 +145,4 @@ Do not load every file up front. Load the next document only when its condition 
 - `patterns.md` — bake, fan-out, repro, public ingress, cleanup loops.
 - `api-cheatsheet.md` — public endpoint contract table.
 - `api-reference.md` — call-layer guide and wrapper notes.
-- `scripts/vers_api.py` — zero-dep Python wrapper invoked via `uv run`.
+- `vers_api.py` — strict-typed wrapper invoked via `uv run`.

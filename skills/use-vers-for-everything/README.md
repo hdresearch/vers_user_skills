@@ -15,16 +15,19 @@ use-vers-for-everything/
 ├── api-cheatsheet.md  # public API contract table
 ├── api-reference.md   # call-layer guide / wrapper notes
 ├── README.md          # this file
-└── scripts/
-    ├── vers_api.py
-    └── pyproject.toml
+├── vers_api.py        # strict-typed agent-facing wrapper
+└── pyproject.toml     # wrapper typecheck/dev config
 ```
 
-## Source authority
+## API source
 
-- Public user-facing contract: `https://docs.vers.sh` and public OpenAPI.
-- Implementation reading is a correctness oracle only; implementation details are not product copy.
-- Semantic mocks/tests can shape entity separation; they are not public API truth.
+The public Vers API contract is documented at:
+
+- `https://docs.vers.sh`
+- `https://docs.vers.sh/api-reference/openapi.json`
+
+When updating this package, refresh `api-cheatsheet.md` from the public OpenAPI
+first. Keep user-facing guidance aligned with the public contract.
 
 ## Install into a harness
 
