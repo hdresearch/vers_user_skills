@@ -128,7 +128,7 @@ COMMAND_USAGE: dict[str, str] = {
     "vm-exec": "usage: vers_api.py vm-exec VM_ID [--shell CMD | -- ARGV...] [--env K=V] [--stdin TEXT] [--cwd DIR] [--timeout-secs N] [--exec-id ID]",
     "vm-exec-stream": "usage: vers_api.py vm-exec-stream VM_ID [--shell CMD | -- ARGV...] [--env K=V] [--exec-id ID]",
     "vm-exec-attach": "usage: vers_api.py vm-exec-attach VM_ID EXEC_ID [--cursor N] [--from-latest]",
-    "vm-new": "usage: vers_api.py vm-new [--mem MIB] [--vcpu N] [--disk MIB] [--image NAME] [--kernel NAME] [--label K=V] [--wait-boot|--no-wait-boot]",
+    "vm-new": "usage: vers_api.py vm-new [--mem MIB] [--vcpu N] [--disk MIB] [--image NAME] [--kernel NAME] [--label K=V] [--hypervisor firecracker|cloud-hypervisor] [--wait-boot|--no-wait-boot]",
     "vm-from-commit": "usage: vers_api.py vm-from-commit [COMMIT_ID | --commit-id ID | --tag-name TAG | --ref REPO:TAG]",
     "vm-branch": "usage: vers_api.py vm-branch (--vm-id ID | --commit-id ID | --tag TAG | --ref REPO:TAG | --any-id ID) [--count N] [--keep-paused] [--skip-wait-boot]",
     "repo-tag-create": "usage: vers_api.py repo-tag-create REPO TAG COMMIT_ID [--description TEXT]",
@@ -191,9 +191,11 @@ def field_str(data: object, key: str) -> str:
     return value
 
 
-def req(method: str, path: str, body: dict[str, Json] | None = None, *, base: str = API_BASE, authed: bool = True, timeout: int = 120) -> object:
+def req(method: str, path: str, body: dict[str, Json] | None = None, *, base: str = API_BASE, authed: bool = True, timeout: int = 120, extra_headers: dict[str, str] | None = None) -> object:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers: dict[str, str] = {"Content-Type": "application/json"}
+    if extra_headers is not None:
+        headers.update(extra_headers)
     if authed:
         headers["Authorization"] = f"Bearer {api_key()}"
     request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
@@ -281,11 +283,13 @@ def main(argv: list[str]) -> int:
         vm = a.take("vm_id"); a.done(); return out(req("GET", f"/vm/{quote(vm)}/metadata"))
     if cmd in {"vm-new", "new-root"}:
         mem = a.opt_int("--mem") or 4096; vcpu = a.opt_int("--vcpu") or 2; disk = a.opt_int("--disk") or 8192
-        image = a.opt("--image") or "default"; kernel = a.opt("--kernel") or "default.bin"
+        image = a.opt("--image") or "default"; kernel = a.opt("--kernel") or "default.bin"; hypervisor = a.opt("--hypervisor")
         labels = kv(a.many("--label")); wait = a.bool_opt("--wait-boot", "--no-wait-boot", True); a.done()
+        if hypervisor is not None and hypervisor not in {"firecracker", "cloud-hypervisor"}: raise CliError("--hypervisor must be firecracker or cloud-hypervisor")
         cfg: dict[str, Json] = {"mem_size_mib": mem, "vcpu_count": vcpu, "fs_size_mib": disk, "image_name": image, "kernel_name": kernel}
         if labels: cfg["labels"] = json_str_map(labels)
-        return out(req("POST", "/vm/new_root" + query({"wait_boot": wait}), {"vm_config": cfg}))
+        headers = {"X-Vers-Hypervisor": hypervisor} if hypervisor is not None else None
+        return out(req("POST", "/vm/new_root" + query({"wait_boot": wait}), {"vm_config": cfg}, extra_headers=headers))
     if cmd == "vm-from-commit":
         ref = a.opt("--ref"); tag = a.opt("--tag-name"); cid = a.opt("--commit-id")
         target = a.take("commit_id") if cid is None and ref is None and tag is None and a.xs else cid
