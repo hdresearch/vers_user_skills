@@ -25,7 +25,7 @@ curl -sS -H "Authorization: Bearer $VERS_API_KEY" \
 curl -sS -X POST -H "Authorization: Bearer $VERS_API_KEY" \
   -H "content-type: application/json" \
   "https://api.vers.sh/api/v1/vm/new_root?wait_boot=true" \
-  -d '{"vm_config":{"mem_size_mib":512,"vcpu_count":1,"fs_size_mib":512}}'
+  -d '{"vm_config":{"mem_size_mib":<MiB>,"vcpu_count":<N>,"fs_size_mib":<MiB>}}'
 
 # ============================================================
 # 3. Get a VM's metadata (including IPv6 - list_vms does NOT include this)
@@ -121,10 +121,10 @@ curl -sS -X PUT -H "Authorization: Bearer $VERS_API_KEY" \
   -d '{"vars":{"OPENAI_API_KEY":"sk-...","ANTHROPIC_API_KEY":"sk-ant-..."},"replace":false}'
 
 # ============================================================
-# 12. Delete a VM
+# 12. Explicit user-authorized VM termination
 # ============================================================
 VM=...
 curl -sS -X DELETE -H "Authorization: Bearer $VERS_API_KEY" \
   "https://api.vers.sh/api/v1/vm/$VM"
-# Note: returns 200 + body, NOT 204. (Other deletes return 204; vm delete is the outlier.)
+# Note: returns 200 + body, NOT 204. This is outside the autonomous loop.
 # Also note: deleting a non-existent uuid returns 403 not 404.

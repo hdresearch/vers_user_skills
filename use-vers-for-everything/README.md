@@ -1,4 +1,4 @@
-# use-vers-for-everything v0.2.5
+# use-vers-for-everything v0.2.6
 
 A skill for using vers.sh — remote rooted Linux VMs you can branch,
 snapshot, run jobs in, and preserve. Read by LLM agents (Claude,
@@ -32,8 +32,8 @@ or whatever path your harness documents.
 ## Offline validation
 
 ```bash
-cd use-vers-for-everything/scripts
-uv run smoke_test.py
+cd use-vers-for-everything
+uv run scripts/smoke_test.py
 ```
 
 Offline. Checks imports, typed identifier wrappers, RepoRef parsing,

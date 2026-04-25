@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.6 — 2026-04-25
+
+- Hardened preservation semantics against small-model data loss:
+  `branched_vm()` now pauses on exit by default instead of terminating the VM.
+- `prepare_image()` now leaves the prep VM paused by default on success or
+  failure; it no longer hides VM termination inside cleanup.
+- Removed `vm delete` from the LLM-facing Python helper CLI schema. Direct
+  `Client.delete_vm()` remains available only for explicit user-authorized VM
+  removal.
+- Required explicit `mem_mib`, `vcpu`, and `fs_mib` for fresh `new_root` /
+  `vm new` creation. The helper no longer has task-dependent resource defaults.
+- Replaced the fake-looking `bases:warm-v1` example with `<repo>:<tag>` and
+  tightened retry/deletion notes in the empirical error catalog.
+- Smoke test updated to assert that `vm new` rejects missing dimensions and
+  that the helper CLI no longer advertises `vm delete`.
+
 ## 0.2.5 - 2026-04-25
 
 Line audit pass against two named rules:

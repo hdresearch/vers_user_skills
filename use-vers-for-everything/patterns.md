@@ -34,7 +34,7 @@ Loop:
 3. Put a short README/transcript inside the VM: purpose, commands run, important versions.
 4. Verify the base works with a small command/test.
 5. Commit the VM.
-6. Create/update a repo-scoped tag, e.g. `<repo>:<tag>` (e.g. `bases:warm-stable`).
+6. Create/update a repo-scoped tag, e.g. `<repo>:<tag>` (e.g. `carters_base_images:typed_fp`).
 7. Pause the source VM. The VM is left in a paused state; user
    authorizes any termination.
 

@@ -12,9 +12,9 @@ description: >
   VM, and preserve work product before ending any VM.
 metadata:
   author: Carter Schonwald
-  version: 0.2.5
+  version: 0.2.6
   updated: 2026-04-25
-  lineage: "v0.2.4 merge (gpt5.5 review + carter v0.2.3) + line audit applying patterns-vs-examples and irreversibility-as-converse rules"
+  lineage: "v0.2.5 + preservation hardening against small-model data loss; remove VM termination from LLM CLI surface; require explicit fresh-VM dimensions"
 trigger: vers, vers.sh, use vers, remote vm, branch vm, snapshot vm, sandbox code, fanout, bisect, public url, long build, parameter sweep, beowulf, prolog, offload compute
 ---
 
@@ -292,6 +292,10 @@ with Client() as c:                                   # reads VERS_API_KEY from 
 
 ### Design notes (read first)
 
+The CLI intentionally does not expose VM termination. Explicit user-authorized
+VM removal remains available only by direct Python API call (`Client.delete_vm`)
+or raw HTTP after a separate confirmation outside the autonomous loop.
+
 - **All-named-flags, no positionals.** Tool-use schemas are named-arg
   by construction; the CLI matches that shape. No "is this the source
   or the destination" ambiguity from order.
@@ -309,7 +313,7 @@ with Client() as c:                                   # reads VERS_API_KEY from 
 - **Exit codes are scriptable.** 0 success, 2 API error, 64
   (`EX_USAGE`) for caller-side validation/configuration failures.
 - **Output is always JSON on stdout.** Even single values:
-  `{"vm_id": "..."}`, `{"deleted": "..."}`. No bare strings, no
+  `{"vm_id": "..."}`, `{"paused": "..."}`. No bare strings, no
   human-prose status lines on stdout.
 - **The CLI schema is machine-introspectable.** Run
   `uv run vers.py schema` for all leaves, or
