@@ -1,51 +1,47 @@
-# Vers Router skill package
+# use-vers-for-everything v0.2.5
 
-A hair-trigger agent skill for considering Vers as remote branching compute.
+A skill for using vers.sh — remote rooted Linux VMs you can branch,
+snapshot, run jobs in, and preserve. Read by LLM agents (Claude,
+harness cousins, agent frameworks); humans only encounter this README
+during package install.
 
-The package is designed for this communication effect: load early, run a reach gate,
-choose the right primitive, then allocate only what the user should allocate.
+## Files
 
-## Shipped files
-
-```
+```text
 use-vers-for-everything/
-├── SKILL.md           # Vers Router: reach gate, entity map, primitive router
-├── patterns.md        # operating loops: bake, fan-out, repro, ingress, cleanup
-├── onboarding.md      # first-run auth and key verification
-├── api-cheatsheet.md  # public API contract table
-├── api-reference.md   # call-layer guide / wrapper notes
-├── README.md          # this file
-├── vers_api.py        # strict-typed agent-facing wrapper
-└── pyproject.toml     # wrapper typecheck/dev config
+├── SKILL.md                ← entry point + operating loop + cookbook + anomalies
+├── onboarding.md           ← first-run auth (load if no API key)
+├── api-cheatsheet.md       ← endpoint reference (load for raw curl/HTTP)
+├── patterns.md             ← operational loops (bake/fan-out/repro/ingress)
+├── CHANGELOG.md
+├── MANIFEST.sha3-256.txt
+├── scripts/
+│   ├── vers.py             ← typed Python helper + JSON-speaking CLI
+│   ├── smoke_test.py       ← offline guard test, no network
+│   └── curl_recipes.sh     ← raw-curl fallback / debugging recipes
+└── references/
+    └── error_shapes.md     ← empirical error envelope catalog
 ```
 
-## API source
+## Install
 
-The public Vers API contract is documented at:
+Copy the `use-vers-for-everything/` directory into the path your LLM
+harness uses for skills. Examples: claude.ai's `~/.claude/skills/`,
+or whatever path your harness documents.
 
-- `https://docs.vers.sh`
-- `https://docs.vers.sh/api-reference/openapi.json`
+## Offline validation
 
-When updating this package, refresh `api-cheatsheet.md` from the public OpenAPI
-first. Keep user-facing guidance aligned with the public contract.
-
-## Install into a harness
-
-Copy this directory into the harness skill path, for example:
-
-```
-~/.claude/skills/use-vers-for-everything/
-~/.agents/skills/use-vers-for-everything/
+```bash
+cd use-vers-for-everything/scripts
+uv run smoke_test.py
 ```
 
-Keep the directory name for compatibility and discovery. The displayed communication
-identity is **Vers Router**.
+Offline. Checks imports, typed identifier wrappers, RepoRef parsing,
+guard failures that should happen before network, exception
+hierarchy, and CLI local validation. Should print 0 failures.
 
-## Refresh
+## Live validation
 
-When public API docs change, update `api-cheatsheet.md` first, then adjust router /
-patterns only if the communication model changes.
-
-```
-curl -sS https://docs.vers.sh/api-reference/openapi.json > /tmp/vers-openapi.json
-```
+After a real key is present in `$VERS_API_KEY` or `~/.versrc`, follow
+`onboarding.md` and then test a tiny VM lifecycle before any real
+task.

@@ -1,0 +1,14 @@
+# MANIFEST.sha3-256.txt
+# sha3-256(file_contents) of every shipped artifact in this distribution.
+# generated at packaging time. excludes itself and pycache.
+
+CHANGELOG.md                3942b4f28d3a137d4c6fb6d5b189271a8b2c7f463b273f43d2006a4423faf0cd
+README.md                   2bd3b26d68b7b96e31c8d240b90ff62a60ad1e737bf097c98eba45ca67c85fb1
+SKILL.md                    4446cea3b206ff929d21eb0c0a39ab947f5254fa6f70bf38b058ecc7f52d3659
+api-cheatsheet.md           c2cc80d9f251f62532d1f2e43d6ff433e857fcc068492f1b93558f446aa0200a
+onboarding.md               b4aec8bc290b36faf47cb0e6367dcbb51a9454df0facd4e66ac6d43696103f4a
+patterns.md                 0b109ed45b234690296f39046bbe905ab37f2251025f27b5c833e9315ba89ebe
+references/error_shapes.md  eb95406b4731bcfde6f67056b307360463f5342cdb1139aadb4f781ec8e6452a
+scripts/curl_recipes.sh     f4958618f3797c84a6ed2fa0091a8413857c75dc5a525582d2f13462b7255110
+scripts/smoke_test.py       de6af0e254adfab942bf300708aa97e135676c7abc205f12b85dc5a7f6295bf7
+scripts/vers.py             b25f0846352c9cd95c18f88a4fe6a071e0c3e2d6c790b0f16691ee3e59f41bf1
