@@ -48,7 +48,7 @@ Design rationale (read this before changing things):
 
 * The two-phase pattern is the canonical workflow:
     phase 1: prepare_image(base, prep_steps, tag_as=...) -> RepoRef
-    phase 2: branch_from(repo_ref) -> VmId, exec, discard
+    phase 2: branch_from(repo_ref) -> VmId, exec, preserve artifacts, pause
   See prepare_image() and branched_vm() context manager.
 
 Author: Carter Schonwald
@@ -367,7 +367,8 @@ class Domain:
 @dataclass(frozen=True)
 class ForkResult:
     """Result of forking a public repo. Note that fork has a side effect:
-    it creates a new vm too. Caller may want to delete .vm if not needed."""
+    it creates a new VM too. Preserve or pause .vm unless the user separately
+    authorizes VM termination."""
     ref: RepoRef
     vm: VmId
     commit: CommitId
@@ -617,14 +618,22 @@ class Client:
     def new_root(
         self,
         *,
-        mem_mib: int = 512,
-        vcpu: int = 1,
-        fs_mib: int = 512,
+        mem_mib: int,
+        vcpu: int,
+        fs_mib: int,
         wait_boot: bool = True,
     ) -> VmId:
-        """Cold-boot a fresh vm. wait_boot=True (default) blocks until userspace
-        is ready; wait_boot=False returns immediately with the vm in 'booting'
-        state (chain follow-up ops with skip_wait_boot=True)."""
+        """Cold-boot a fresh VM with explicit resource dimensions.
+
+        No helper defaults are provided because LLM callers tend to cargo-cult
+        examples as policy. Pick dimensions from the actual task, say them to
+        the user before allocation, and pass them explicitly. wait_boot=True
+        (default) blocks until userspace is ready; wait_boot=False returns
+        immediately with the VM in 'booting' state.
+        """
+        for name, value in (("mem_mib", mem_mib), ("vcpu", vcpu), ("fs_mib", fs_mib)):
+            if not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer, got {value!r}")
         body = {
             "vm_config": {
                 "mem_size_mib": mem_mib,
@@ -656,8 +665,13 @@ class Client:
         )
 
     def delete_vm(self, vm: VmId, *, skip_wait_boot: bool = False) -> None:
-        """Delete a vm. Note: 403 (not 404) is returned for non-existent uuids;
-        VersForbidden is raised in that case."""
+        """Explicit user-authorized VM termination.
+
+        This method is intentionally direct API surface, not part of the
+        LLM-facing CLI schema or any automatic cleanup path. Note: 403 (not
+        404) is returned for non-existent UUIDs; VersForbidden is raised in
+        that case.
+        """
         params = {"skip_wait_boot": "true"} if skip_wait_boot else None
         self._request("DELETE", f"/vm/{vm}", params=params)
 
@@ -1023,15 +1037,15 @@ def branched_vm(
     client: Client,
     source: VmId | CommitId | RepoRef,
     *,
-    auto_delete: bool = True,
+    auto_pause: bool = True,
 ) -> Iterator[VmId]:
-    """Context manager: branch from source, yield the vm, optionally delete on exit.
+    """Context manager: branch from source, yield the VM, optionally pause on exit.
 
     Canonical phase-2 pattern:
 
         with branched_vm(c, base_image_ref) as vm:
             result = c.exec(vm, ['python', 'work.py'])
-        # vm deleted on exit (CoW so it was cheap to make and cheap to discard)
+        # VM paused on exit unless auto_pause=False. No hidden termination.
     """
     vms = client.branch_from(source)
     if not vms:
@@ -1040,9 +1054,9 @@ def branched_vm(
     try:
         yield vm
     finally:
-        if auto_delete:
+        if auto_pause:
             try:
-                client.delete_vm(vm)
+                client.pause(vm)
             except VersError:
                 pass
 
@@ -1054,9 +1068,10 @@ def prepare_image(
     prep_steps: list[list[str]],
     tag_as: tuple[RepoName, str],
     description: str = "",
-    mem_mib: int = 512,
-    vcpu: int = 1,
-    fs_mib: int = 512,
+    mem_mib: int | None = None,
+    vcpu: int | None = None,
+    fs_mib: int | None = None,
+    auto_pause: bool = True,
 ) -> RepoRef:
     """Phase-1 image preparation. Spin up a base, run prep steps, commit, tag.
 
@@ -1066,9 +1081,11 @@ def prepare_image(
             run sequentially. Aborts on first non-zero exit.
         tag_as: (repo_name, tag_name) for the resulting commit.
         description: commit description.
-        mem_mib / vcpu / fs_mib: only used if base is None (fresh vm).
+        mem_mib / vcpu / fs_mib: required only if base is None (fresh VM).
+        auto_pause: pause the prep VM before returning or re-raising.
 
-    Returns the new RepoRef. Cleans up the prep vm on success or failure.
+    Returns the new RepoRef. Leaves the prep VM paused by default; it does not
+    hide VM termination inside success or failure cleanup.
 
     Note on ready-state discipline: each step's stdout/stderr is printed to
     the python logger; the commit happens AFTER all steps complete. The vm
@@ -1081,14 +1098,30 @@ def prepare_image(
     log = logging.getLogger("vers.prepare_image")
     repo, tag_name = tag_as
 
+    if base is None:
+        missing = [
+            name for name, value in (
+                ("mem_mib", mem_mib),
+                ("vcpu", vcpu),
+                ("fs_mib", fs_mib),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "prepare_image(base=None) requires explicit fresh-VM dimensions: "
+                + ", ".join(missing)
+            )
+
     # Make sure the repo exists; create if not.
     try:
         client.get_repo(repo)
     except VersNotFound:
         client.create_repo(repo, description=description or f"created by prepare_image")
 
-    # Materialize the prep vm.
+    # Materialize the prep VM.
     if base is None:
+        assert mem_mib is not None and vcpu is not None and fs_mib is not None
         vm = client.new_root(mem_mib=mem_mib, vcpu=vcpu, fs_mib=fs_mib)
         log.info("phase-1 fresh vm: %s", vm)
     else:
@@ -1113,10 +1146,11 @@ def prepare_image(
         log.info("phase-1 done; tagged as %s -> commit %s", ref, c)
         return ref
     finally:
-        try:
-            client.delete_vm(vm)
-        except VersError:
-            pass
+        if auto_pause:
+            try:
+                client.pause(vm)
+            except VersError:
+                pass
 
 
 # ============================================================================
@@ -1132,7 +1166,7 @@ def prepare_image(
 #     uv run vers.py whoami
 #     uv run vers.py vm list --mine
 #     uv run vers.py vm get 3c9e74df-...
-#     uv run vers.py vm new --mem 512 --vcpu 1 --fs 512
+#     uv run vers.py vm new --mem-mib <MiB> --vcpu <N> --fs-mib <MiB>
 #     uv run vers.py vm exec <uuid> -- ls -la /
 #     uv run vers.py repo list
 #     uv run vers.py tag list bases
@@ -1355,23 +1389,18 @@ def _build_parser() -> "argparse.ArgumentParser":
     _add_json_arg(p_vget)
     p_vget.set_defaults(_handler="vm_get", _json_keys=["vm_id"], _required=["vm_id"])
 
-    p_vnew = vm.add_parser("new", help="cold-start a new root vm")
-    p_vnew.add_argument("--mem-mib", type=int, default=512)
-    p_vnew.add_argument("--vcpu", type=int, default=1)
-    p_vnew.add_argument("--fs-mib", type=int, default=512)
+    p_vnew = vm.add_parser("new", help="cold-start a new root VM")
+    p_vnew.add_argument("--mem-mib", type=int, default=None)
+    p_vnew.add_argument("--vcpu", type=int, default=None)
+    p_vnew.add_argument("--fs-mib", type=int, default=None)
     p_vnew.add_argument("--wait-boot", choices=("true", "false"), default="true",
                         help="wait for boot (default: true)")
     _add_json_arg(p_vnew)
     p_vnew.set_defaults(
         _handler="vm_new",
         _json_keys=["mem_mib", "vcpu", "fs_mib", "wait_boot"],
-        _required=[],
+        _required=["mem_mib", "vcpu", "fs_mib"],
     )
-
-    p_vdel = vm.add_parser("delete", help="delete a vm")
-    p_vdel.add_argument("--vm-id", default=None)
-    _add_json_arg(p_vdel)
-    p_vdel.set_defaults(_handler="vm_delete", _json_keys=["vm_id"], _required=["vm_id"])
 
     p_vpause = vm.add_parser("pause", help="pause a running vm")
     p_vpause.add_argument("--vm-id", default=None)
@@ -1739,9 +1768,6 @@ def _dispatch(args: "argparse.Namespace") -> int:  # noqa: C901
                     wait_boot=cast(bool, args.wait_boot),
                 )
                 _emit({"vm_id": v}, compact=compact)
-            elif h == "vm_delete":
-                c.delete_vm(vm_id(args.vm_id))
-                _emit({"deleted": args.vm_id}, compact=compact)
             elif h == "vm_pause":
                 c.pause(vm_id(args.vm_id))
                 _emit({"paused": args.vm_id}, compact=compact)

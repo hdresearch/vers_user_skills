@@ -45,7 +45,7 @@ prose-only (`/health`) documented below. Every endpoint appears in exactly one r
 | PATCH  | `/vm/{vm_id}/state`            | Change run state (Running / Paused) | p: `vm_id`; q: `skip_wait_boot:bool` | `{ state: "Running" \| "Paused" }` | `200` (empty) | 400, 401, 403, 404, 500 |
 | PATCH  | `/vm/{vm_id}/disk`             | Resize rootfs disk (MiB, grow only in practice) | p: `vm_id`; q: `skip_wait_boot:bool` | `{ fs_size_mib:int }` | `200` (empty) | 400, 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/commit`           | Snapshot VM rootfs into a new commit | p: `vm_id`; q: `keep_paused:bool`, `skip_wait_boot:bool` | `VmCommitRequest { commit_id?, name?, description? }` (all fields nullable) | `201 { commit_id }` | 400, 401, 403, 404, 500 |
-| DELETE | `/vm/{vm_id}`                  | Destroy the VM (does not delete its commits) | p: `vm_id`; q: `skip_wait_boot:bool` | - | `200 { vm_id }` | 400, 401, 403, 404, 500 |
+| DELETE | `/vm/{vm_id}`                  | Explicit user-authorized VM termination (does not delete its commits) | p: `vm_id`; q: `skip_wait_boot:bool` | - | `200 { vm_id }` | 400, 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/exec`             | Run a command synchronously; return full stdout/stderr/exit_code | p: `vm_id` | `VmExecRequest { *command:[string], env?, stdin?, working_dir?, timeout_secs?, exec_id? }` | `200 { stdout, stderr, exit_code, exec_id? }` | 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/exec/stream`      | Run command; server streams NDJSON `{timestamp,stream,data_b64,exec_id}` chunks | p: `vm_id` | Same `VmExecRequest`. Supply `exec_id` to enable attach-by-cursor | `200` NDJSON stream | 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/exec/stream/attach` | Re-attach to a running / completed exec, replay from cursor | p: `vm_id` | `{ *exec_id, cursor?:int, from_latest?:bool }` | `200` NDJSON stream | 401, 403, 404, 500 |
@@ -221,7 +221,7 @@ curl -sH "$H" "$B/vm/commits/$CID/parents" | jq -r '.[] | .id + " " + .name'
 
 ```sh
 VM=$(curl -sH "$H" -H 'Content-Type: application/json' \
-     -d "{\"ref\":\"bases:warm-v1\"}" "$B/vm/from_commit" | jq -r .vm_id)
+     -d "{\"ref\":\"<repo>:<tag>\"}" "$B/vm/from_commit" | jq -r .vm_id)
 
 # Inline small-payload write via the API files endpoint (base64, JSON-wrapped).
 B64=$(printf 'hello from vers\n' | base64)

@@ -224,7 +224,7 @@ def main() -> int:
         "expected leaves present",
         lambda: all(k in leaves for k in (
             "whoami", "schema",
-            "vm list", "vm get", "vm new", "vm exec", "vm delete",
+            "vm list", "vm get", "vm new", "vm exec",
             "vm pause", "vm resume", "vm logs", "vm ssh-key",
             "repo list", "repo get", "repo create", "repo delete",
             "tag list", "tag create",
@@ -250,6 +250,7 @@ def main() -> int:
             and "mem_mib" in s["properties"]
             and s["properties"]["mem_mib"]["type"] == "integer"
             and s["properties"]["mem_mib"]["flag"] == "--mem-mib"
+            and set(["mem_mib", "vcpu", "fs_mib"]).issubset(set(s["required"]))
         ),
     )
     check(
@@ -387,6 +388,10 @@ def main() -> int:
         lambda: _run_cli(
             ["vm", "exec", "--json", '{}']
         ) == 64,
+    )
+    check(
+        "vm new without explicit dimensions → exit 64",
+        lambda: _run_cli(["vm", "new"]) == 64,
     )
     check(
         "VersCliUsageError is a ValueError subclass (catchable as such)",

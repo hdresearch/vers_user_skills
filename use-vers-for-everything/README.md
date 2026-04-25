@@ -1,4 +1,4 @@
-# use-vers-for-everything v0.2.5
+# use-vers-for-everything v0.2.6
 
 A skill for using vers.sh — remote rooted Linux VMs you can branch,
 snapshot, run jobs in, and preserve. Read by LLM agents (Claude,
