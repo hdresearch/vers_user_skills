@@ -59,6 +59,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+import shlex
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -389,6 +390,19 @@ def _retry_status(s: int) -> bool:
     return s in (408, 429) or 500 <= s < 600
 
 
+def _wrap_for_pty(cmd: list[str]) -> list[str]:
+    """Wrap argv so the remote process runs under a pseudo-terminal.
+
+    Vers /exec does not expose a native PTY flag. The default Ubuntu root image
+    includes util-linux `script(1)`, so use it as the VM-side PTY allocator.
+    `-e` makes script return the child command's exit status; `/dev/null` avoids
+    leaving transcript files behind in the VM.
+    """
+    if not cmd or not all(isinstance(x, str) and x for x in cmd):
+        raise ValueError("pty command must be a non-empty argv list of strings")
+    return ["script", "-q", "-e", "-c", shlex.join(cmd), "/dev/null"]
+
+
 class Client:
     """Synchronous client for the vers.sh API.
 
@@ -697,9 +711,16 @@ class Client:
         *,
         env: dict[str, str] | None = None,
         working_dir: str | None = None,
+        pty: bool = False,
     ) -> ExecResult:
-        """Run a command, wait for completion, return result. Synchronous."""
-        body: dict[str, Any] = {"command": cmd}
+        """Run a command, wait for completion, return result. Synchronous.
+
+        Set pty=True for programs whose behavior depends on isatty(3),
+        terminal width, ANSI coloring, line buffering, or TTY-gated CLIs. This
+        wraps the command with VM-side util-linux `script(1)`; use normal exec
+        for raw binary output or when exact stdout bytes matter.
+        """
+        body: dict[str, Any] = {"command": _wrap_for_pty(cmd) if pty else cmd}
         if env:
             body["env"] = env
         if working_dir:
@@ -719,6 +740,7 @@ class Client:
         *,
         env: dict[str, str] | None = None,
         working_dir: str | None = None,
+        pty: bool = False,
     ) -> Iterator[LogEntry]:
         """Streaming exec. Yields LogEntry chunks as they arrive. Generator —
         consume with a for loop. Closes the http stream on exhaustion or
@@ -727,8 +749,11 @@ class Client:
         Note: the upstream server's /exec/stream response shape is not
         documented as NDJSON or SSE; this method yields entries by parsing
         json lines. If the server changes shape, this needs to follow.
+
+        Set pty=True for TTY-sensitive long-running commands. As with exec(),
+        this uses VM-side util-linux `script(1)`, not a native API PTY field.
         """
-        body: dict[str, Any] = {"command": cmd}
+        body: dict[str, Any] = {"command": _wrap_for_pty(cmd) if pty else cmd}
         if env:
             body["env"] = env
         if working_dir:
@@ -1420,10 +1445,12 @@ def _build_parser() -> "argparse.ArgumentParser":
     p_vexec.add_argument("--vm-id", default=None)
     p_vexec.add_argument("--argv", default=None,
                          help="command as JSON array of strings")
+    p_vexec.add_argument("--pty", action="store_true",
+                         help="run command under a VM-side pseudo-terminal via script(1)")
     _add_json_arg(p_vexec)
     p_vexec.set_defaults(
         _handler="vm_exec",
-        _json_keys=["vm_id", "argv"],
+        _json_keys=["vm_id", "argv", "pty"],
         _required=["vm_id", "argv"],
     )
 
@@ -1795,7 +1822,10 @@ def _dispatch(args: "argparse.Namespace") -> int:  # noqa: C901
                     raise ValueError(
                         "argv must be a non-empty array of strings"
                     )
-                _emit(c.exec(vm_id(args.vm_id), argv_list), compact=compact)
+                if not isinstance(args.pty, bool):
+                    raise ValueError("pty must be a boolean")
+                _emit(c.exec(vm_id(args.vm_id), argv_list, pty=args.pty),
+                      compact=compact)
             elif h == "vm_logs":
                 _emit(c.get_logs(
                     vm_id(args.vm_id),

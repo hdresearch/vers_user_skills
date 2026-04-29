@@ -48,6 +48,7 @@ prose-only (`/health`) documented below. Every endpoint appears in exactly one r
 | DELETE | `/vm/{vm_id}`                  | Explicit user-authorized VM termination (does not delete its commits) | p: `vm_id`; q: `skip_wait_boot:bool` | - | `200 { vm_id }` | 400, 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/exec`             | Run a command synchronously; return full stdout/stderr/exit_code | p: `vm_id` | `VmExecRequest { *command:[string], env?, stdin?, working_dir?, timeout_secs?, exec_id? }` | `200 { stdout, stderr, exit_code, exec_id? }` | 401, 403, 404, 500 |
 | POST   | `/vm/{vm_id}/exec/stream`      | Run command; server streams NDJSON `{timestamp,stream,data_b64,exec_id}` chunks | p: `vm_id` | Same `VmExecRequest`. Supply `exec_id` to enable attach-by-cursor | `200` NDJSON stream | 401, 403, 404, 500 |
+| Helper | `uv run vers.py vm exec --pty ...` | Allocate a VM-side pseudo-terminal for TTY-sensitive commands | - | Implemented by wrapping `command` as `script -q -e -c <shell-quoted argv> /dev/null`; this is helper behavior, not a native REST field | same `VmExecResponse` | same as `/exec`; if `script` is missing, command exits 127 |
 | POST   | `/vm/{vm_id}/exec/stream/attach` | Re-attach to a running / completed exec, replay from cursor | p: `vm_id` | `{ *exec_id, cursor?:int, from_latest?:bool }` | `200` NDJSON stream | 401, 403, 404, 500 |
 | GET    | `/vm/{vm_id}/files`            | Read a single file out of the VM as base64 | p: `vm_id`; q: `*path:string` | - | `200 { content_b64 }` | 401, 403, 404, 500 |
 | PUT    | `/vm/{vm_id}/files`            | Write a file into the VM (base64 body) | p: `vm_id` | `{ *path, *content_b64, mode?:int, create_dirs?:bool }` | `200` (empty) | 401, 403, 404, 500 |
@@ -256,21 +257,29 @@ curl -sH "$H" -X DELETE "$B/vm/$VM" | jq .
 
 ### 5. Transfer files between VMs over SSH-over-TLS
 
-SSH-over-TLS endpoint: host `{vm_id}.vm.vers.sh`, port `443` (TLS), user `root`,
-key from `GET /vm/{id}/ssh_key`. Use an openssl s_client ProxyCommand.
+SSH-over-TLS endpoint: host `{vm_id}.vm.vers.sh`, TCP port `443`, user `root`,
+private key from `GET /vm/{id}/ssh_key`. Use an openssl `s_client` ProxyCommand.
+The response field `ssh_port` is metadata, not the port to dial in the normal TLS
+path; direct TCP to `ssh_port` may time out.
 
 ```sh
 # Prereqs: both VMs warm (step 4), /tmp/srckey and /tmp/dstkey pulled via /vm/{id}/ssh_key
 SRC=<src_vm_id> ; DST=<dst_vm_id>
 PROXY='openssl s_client -quiet -servername %h -connect %h:%p'
+SSH='ssh -p 443 -o ProxyCommand="$PROXY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
 
 # Source VM → local
-rsync -avz -e "ssh -i /tmp/srckey -o ProxyCommand='$PROXY' -o StrictHostKeyChecking=no" \
+rsync -avz -e "$SSH -i /tmp/srckey" \
       root@${SRC}.vm.vers.sh:/data/payload.tar /tmp/payload.tar
 
 # Local → destination VM
-rsync -avz -e "ssh -i /tmp/dstkey -o ProxyCommand='$PROXY' -o StrictHostKeyChecking=no" \
+rsync -avz -e "$SSH -i /tmp/dstkey" \
       /tmp/payload.tar root@${DST}.vm.vers.sh:/data/payload.tar
+
+
+# Interactive shell / PTY-sensitive command: force SSH TTY allocation with -tt
+$SSH -tt -i /tmp/vm.key root@${SRC}.vm.vers.sh 'tty; stty size; printf "TERM=${TERM-}\n"'
 ```
 
 ### Quick reference: endpoint count by section

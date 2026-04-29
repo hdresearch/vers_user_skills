@@ -260,6 +260,15 @@ def main() -> int:
             and set(s["exactly_one_of"]) == {"ref", "vm_id", "commit_id"}
         ),
     )
+    check(
+        "schema_for_leaf records pty boolean for vm exec",
+        lambda: (
+            (s := _schema_for_leaf(leaves["vm exec"], "vm exec"))
+            and "pty" in s["properties"]
+            and s["properties"]["pty"]["type"] == "boolean"
+            and "pty" not in s["required"]
+        ),
+    )
 
     print("\n=== --json bulk-input dispatch (no network) ===")
     from vers import _resolve_json, _validate_required, _validate_exactly_one
@@ -354,6 +363,15 @@ def main() -> int:
                 ref="r:t", vm_id=NULL_UUID, commit_id=None),
         ),
     )
+    check(
+        "_wrap_for_pty wraps argv through util-linux script",
+        lambda: vers._wrap_for_pty(["python3", "-q"])
+        == ["script", "-q", "-e", "-c", "python3 -q", "/dev/null"],
+    )
+    check(
+        "_wrap_for_pty rejects empty argv",
+        lambda: _expect_raise(ValueError, vers._wrap_for_pty, []),
+    )
 
     print("\n=== CLI argparse-failure → JSON envelope (exit 64) ===")
 
@@ -387,6 +405,13 @@ def main() -> int:
         "vm exec with --json '{}' (missing both vm_id and argv) → exit 64",
         lambda: _run_cli(
             ["vm", "exec", "--json", '{}']
+        ) == 64,
+    )
+    check(
+        "vm exec with --json pty as string → exit 64",
+        lambda: _run_cli(
+            ["vm", "exec", "--json",
+             '{"vm_id":"%s","argv":["sh","-lc","true"],"pty":"true"}' % NULL_UUID]
         ) == 64,
     )
     check(

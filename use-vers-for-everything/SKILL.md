@@ -53,6 +53,7 @@ user-authorized action outside the autonomous loop.
 | describe a VM (state, IP, parent commit) | `uv run vers.py vm get --vm-id <uuid>` |
 | spin up a fresh VM | `uv run vers.py vm new --mem-mib <MiB> --vcpu <N> --fs-mib <MiB>` |
 | run a command in a VM | `uv run vers.py vm exec --vm-id <uuid> --argv '["sh","-c","echo hi"]'` |
+| run a TTY-sensitive command | `uv run vers.py vm exec --vm-id <uuid> --pty --argv '["sh","-lc","python3 -q"]'` |
 | pause a VM | `uv run vers.py vm pause --vm-id <uuid>` |
 | resume a paused VM | `uv run vers.py vm resume --vm-id <uuid>` |
 | snapshot a VM into a commit | `uv run vers.py commit --vm-id <uuid>` |
@@ -169,6 +170,9 @@ around it silently.
 2. Prefer `/exec` before SSH: one-shot command uses `/exec`; long
    command uses `/exec/stream`; interactive sessions and large
    transfers use SSH-over-Transport Layer Security (TLS) on port 443.
+   For SSH, dial `{vm_id}.vm.vers.sh` on TCP `443` through
+   `openssl s_client`; use `ssh -tt` when you need a remote PTY. Do
+   not treat `ssh_port` as the normal direct TCP port.
 3. Bake before fan-out: install dependencies once, verify, commit,
    tag, branch from that base.
 4. Name durable things with repo-scoped tags (`<repo>:<tag>`).
@@ -303,6 +307,10 @@ or raw HTTP after a separate confirmation outside the autonomous loop.
   `env set --vars '{...}'` take JSON literals, not bash-style splat
   or `KEY=VAL` syntax. LLMs already produce JSON natively; this is
   the shorter path.
+- **PTY is a flag, not a workflow fork.** `vm exec --pty` wraps the argv
+  with VM-side util-linux `script(1)` so TTY-sensitive tools see a
+  pseudo-terminal. Use it for REPL-ish tools, color/line-buffered CLIs,
+  and commands gated on `isatty(3)`; avoid it for exact binary stdout.
 - **Typed dispatch is encoded by mutually-exclusive flag groups, not
   string parsing.** `branch --ref X` vs `branch --vm-id X` vs
   `branch --commit-id X` — argparse enforces "exactly one." No "is
@@ -327,7 +335,7 @@ uv run vers.py whoami                                   # owner_id
 uv run vers.py vm list --owner mine                     # or --owner all
 uv run vers.py vm get --vm-id <uuid>                    # metadata incl. IPv6
 uv run vers.py vm new --mem-mib <MiB> --vcpu <N> --fs-mib <MiB> [--wait-boot false]
-uv run vers.py vm exec --vm-id <uuid> --argv '["sh","-c","echo hi"]'
+uv run vers.py vm exec --vm-id <uuid> --argv '["sh","-c","echo hi"]' [--pty]
 uv run vers.py vm logs --vm-id <uuid> [--max-entries <N>] [--offset <N>]
 uv run vers.py vm pause --vm-id <uuid>
 uv run vers.py vm resume --vm-id <uuid>
@@ -386,7 +394,7 @@ uv run vers.py vm get --json '{"vm_id":"<uuid>"}'
 uv run vers.py vm new --json '{"mem_mib":<MiB>,"vcpu":<N>,"fs_mib":<MiB>,"wait_boot":true}'
 
 # nested arrays/dicts compose naturally — no JSON-string-inside-string gymnastics
-uv run vers.py vm exec --json '{"vm_id":"<uuid>","argv":["sh","-c","echo hi"]}'
+uv run vers.py vm exec --json '{"vm_id":"<uuid>","argv":["sh","-c","echo hi"],"pty":false}'
 uv run vers.py env set --json '{"vars":{"FOO":"bar","BAZ":"qux"},"mode":"merge"}'
 
 # branch source mutex enforced after JSON parsing

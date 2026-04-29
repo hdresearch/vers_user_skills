@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added helper-side PTY support for `vm exec`: `--pty` / JSON `"pty": true`
+  wraps argv through VM-side util-linux `script(1)` so TTY-sensitive CLIs
+  see a pseudo-terminal without switching to SSH.
+- Clarified SSH-over-TLS docs: use TCP port 443 through `openssl s_client`,
+  force remote PTY with `ssh -tt`, and do not treat `ssh_port` as the normal
+  direct dial port.
+
 ## v0.2.6 — 2026-04-25
 
 - Hardened preservation semantics against small-model data loss:
